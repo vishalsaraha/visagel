@@ -46,7 +46,8 @@
         {
           "cameraPermission": "Allow Visagel to access your camera for wall-mounted face attendance scanning."
         }
-      ]
+      ],
+      "expo-mail-composer"
     ],
     "experiments": {
       "typedRoutes": true,
