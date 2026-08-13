@@ -1,106 +1,153 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
   View,
-  ScrollView,
-  TouchableOpacity,
   StatusBar,
+  ActivityIndicator,
+  Dimensions,
+  TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { FontAwesome } from '@expo/vector-icons';
+import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useRouter } from 'expo-router';
+
+const { width } = Dimensions.get('window');
 
 export default function AttendanceScreen() {
-  const [activeTab, setActiveTab] = useState<'daily' | 'monthly'>('daily');
+  const router = useRouter();
+  const [currentTime, setCurrentTime] = useState<string>('');
+  const [lastScanned, setLastScanned] = useState<{ name: string; time: string; type: string } | null>(null);
+  
+  // Expo Camera permission hook
+  const [permission, requestPermission] = useCameraPermissions();
+  const cameraRef = useRef<any>(null);
 
-  // Dummy attendance data matching your dashboard reference
-  const attendanceList = [
-    { id: '1', serialNo: 'BR-001', name: 'Ravi Kiran', timeIn: '09:30 AM', timeOut: '05:30 PM' },
-    { id: '2', serialNo: 'BR-001', name: 'Prabhu Raj Manoj', timeIn: '09:30 AM', timeOut: '05:30 PM' },
-    { id: '3', serialNo: 'BR-001', name: 'Daniel Defoe', timeIn: '09:30 AM', timeOut: '05:30 PM' },
-    { id: '4', serialNo: 'BR-001', name: 'Prabhu Rajashha...', timeIn: '09:30 AM', timeOut: '05:30 PM' },
-    { id: '5', serialNo: 'BR-001', name: 'Ravi Kiran', timeIn: '09:30 AM', timeOut: '05:30 PM' },
-    { id: '6', serialNo: 'BR-001', name: 'Ravi Kiran', timeIn: '09:30 AM', timeOut: '05:30 PM' },
-  ];
+  // Auto-request camera permissions on mount for wall-mounted kiosk use
+  useEffect(() => {
+    (async () => {
+      if (!permission || !permission.granted) {
+        await requestPermission();
+      }
+    })();
+  }, [permission]);
+
+  // Simulate automatic face scan loop for a wall-mounted kiosk
+  useEffect(() => {
+    const scanTimer = setTimeout(() => {
+      const now = new Date();
+      let hours = now.getHours();
+      const minutes = now.getMinutes();
+      const seconds = now.getSeconds();
+      const ampm = hours >= 12 ? 'pm' : 'am';
+      hours = hours % 12;
+      hours = hours ? hours : 12;
+      const minutesStr = minutes < 10 ? '0' + minutes : minutes;
+      const secondsStr = seconds < 10 ? '0' + seconds : seconds;
+      
+      setLastScanned({
+        name: 'Ravi Kiran (BR-001)',
+        time: `${hours}:${minutesStr}:${secondsStr} ${ampm}`,
+        type: 'Time In Verified',
+      });
+    }, 3000);
+
+    return () => clearTimeout(scanTimer);
+  }, []);
+
+  // Live clock simulation
+  useEffect(() => {
+    const updateClock = () => {
+      const now = new Date();
+      let hours = now.getHours();
+      const minutes = now.getMinutes();
+      const seconds = now.getSeconds();
+      const ampm = hours >= 12 ? 'pm' : 'am';
+      hours = hours % 12;
+      hours = hours ? hours : 12; 
+      const minutesStr = minutes < 10 ? '0' + minutes : minutes;
+      const secondsStr = seconds < 10 ? '0' + seconds : seconds;
+      setCurrentTime(`${hours}:${minutesStr}:${secondsStr} ${ampm}`);
+    };
+
+    updateClock();
+    const interval = setInterval(updateClock, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
-      {/* Header Title */}
+      {/* Header Title with Old Style Underline and Admin Button */}
       <View style={styles.headerContainer}>
-        <Text style={styles.headerTitle}>Attendance Dashboard</Text>
-        <View style={styles.headerUnderline} />
+        <View style={styles.headerTopRow}>
+          <View>
+            <Text style={styles.headerTitle}>Attendance Kiosk</Text>
+            <View style={styles.headerUnderline} />
+          </View>
+          <TouchableOpacity 
+            style={styles.adminButton}
+            activeOpacity={0.8}
+            onPress={() => router.push('/screens/enrolment')}
+          >
+            <FontAwesome name="lock" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+            <Text style={styles.adminButtonText}>Admin</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* Daily / Monthly Toggle Tabs */}
-      <View style={styles.tabContainer}>
-        <TouchableOpacity
-          style={[styles.tabButton, activeTab === 'daily' && styles.activeTabButton]}
-          onPress={() => setActiveTab('daily')}
-        >
-          <Text style={[styles.tabText, activeTab === 'daily' && styles.activeTabText]}>
-            DAILY
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tabButton, activeTab === 'monthly' && styles.activeTabButton]}
-          onPress={() => setActiveTab('monthly')}
-        >
-          <Text style={[styles.tabText, activeTab === 'monthly' && styles.activeTabText]}>
-            MONTHLY
-          </Text>
-        </TouchableOpacity>
+      <View style={styles.scrollContent}>
+        
+        {/* Redesigned Sleek Digital Clock & Calendar Banner */}
+        <View style={styles.clockBannerCard}>
+          <View style={styles.clockBannerTopRow}>
+            <View style={styles.dateBadgePill}>
+              <MaterialCommunityIcons name="calendar-blank" size={14} color="#FF6900" style={{ marginRight: 6 }} />
+              <Text style={styles.dateBadgeText}>Thursday, 13 August 2026</Text>
+            </View>
+            <View style={styles.liveIndicatorDot} />
+          </View>
+
+          <View style={styles.clockBannerMainRow}>
+            <MaterialCommunityIcons name="clock-outline" size={28} color="#FF6900" style={{ marginRight: 12 }} />
+            <Text style={styles.heroDigitalTime}>{currentTime || '8:43:40 am'}</Text>
+          </View>
+
+          {/* Large Wall-Mounted Camera Viewport with absolute overlay matching SDK requirements */}
+          <View style={styles.cameraWrapper}>
+            <CameraView 
+              style={styles.expoCameraView} 
+              facing="front"
+              ref={cameraRef}
+            />
+            <View style={styles.cameraOverlayFrame} pointerEvents="none">
+              <ActivityIndicator size="small" color="#FF6900" style={{ marginBottom: 4 }} />
+              <Text style={styles.scannerActiveText}>Stand in front to scan...</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Highly Visible Verification Result & Time Banner */}
+        <View style={styles.summaryCard}>
+          {lastScanned ? (
+            <View style={styles.scannedResultBox}>
+              <FontAwesome name="check-circle" size={32} color="#059669" style={{ marginRight: 16 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.scannedNameText}>{lastScanned.name}</Text>
+                <Text style={styles.scannedTypeBadge}>{lastScanned.type}</Text>
+                <Text style={styles.scannedTimeText}>{lastScanned.time}</Text>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.emptyScanBox}>
+              <Text style={styles.emptyScanText}>Position face within frame to automatically register attendance.</Text>
+            </View>
+          )}
+        </View>
+
       </View>
-
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Report Subheader */}
-        <Text style={styles.sectionSubTitle}>Daily Attendance Report</Text>
-
-        {/* Date Selector */}
-        <View style={styles.dateSelectorRow}>
-          <Text style={styles.selectDateLabel}>Select Date</Text>
-          <View style={styles.dateBadge}>
-            <Text style={styles.dateBadgeText}>Friday, Sept 3, 2021</Text>
-          </View>
-        </View>
-
-        {/* Stats Cards (Marked & Enrolled) */}
-        <View style={styles.statsRow}>
-          <View style={styles.statCard}>
-            <Text style={styles.statCardTitle}>Marked</Text>
-            <Text style={styles.statCardNumber}>3</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statCardTitle}>Enrolled</Text>
-            <Text style={styles.statCardNumber}>26</Text>
-          </View>
-        </View>
-
-        {/* Attendance List Section */}
-        <Text style={styles.listSectionTitle}>Attendance List</Text>
-
-        <View style={styles.tableHeader}>
-          <Text style={[styles.tableHeaderText, { flex: 1.2 }]}>Serial No.</Text>
-          <Text style={[styles.tableHeaderText, { flex: 1.5 }]}>Name</Text>
-          <Text style={[styles.tableHeaderText, { flex: 1.2 }]}>Time In</Text>
-          <Text style={[styles.tableHeaderText, { flex: 1.2, textAlign: 'right' }]}>Time Out</Text>
-        </View>
-
-        {attendanceList.map((item) => (
-          <View key={item.id} style={styles.tableRow}>
-            <Text style={[styles.tableCellBold, { flex: 1.2 }]}>{item.serialNo}</Text>
-            <Text style={[styles.tableCell, { flex: 1.5 }]} numberOfLines={1}>{item.name}</Text>
-            <Text style={[styles.tableCell, { flex: 1.2 }]}>{item.timeIn}</Text>
-            <Text style={[styles.tableCell, { flex: 1.2, textAlign: 'right' }]}>{item.timeOut}</Text>
-          </View>
-        ))}
-      </ScrollView>
-
-      {/* Floating Action Button */}
-      <TouchableOpacity style={styles.fabButton} activeOpacity={0.8}>
-        <FontAwesome name="share-alt" size={20} color="#FFFFFF" />
-      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -115,147 +162,174 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 8,
   },
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   headerTitle: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '700',
     color: '#0A192F',
   },
   headerUnderline: {
-    width: 30,
+    width: 35,
     height: 3,
     backgroundColor: '#FF6900',
     marginTop: 6,
     borderRadius: 2,
   },
-  tabContainer: {
+  adminButton: {
     flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-    marginTop: 10,
-  },
-  tabButton: {
-    flex: 1,
-    paddingVertical: 14,
     alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: '#FF6900',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    shadowColor: '#FF6900',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  activeTabButton: {
-    borderBottomWidth: 3,
-    borderBottomColor: '#FF6900',
-  },
-  tabText: {
+  adminButtonText: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#9CA3AF',
-    letterSpacing: 0.5,
-  },
-  activeTabText: {
-    color: '#FF6900',
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   scrollContent: {
     padding: 20,
-    paddingBottom: 90, // extra space for floating action button & bottom tab bar
   },
-  sectionSubTitle: {
-    fontSize: 14,
-    color: '#9CA3AF',
-    marginBottom: 12,
+  clockBannerCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#64748B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
-  dateSelectorRow: {
+  clockBannerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 20,
+    justifyContent: 'space-between',
+    marginBottom: 10,
   },
-  selectDateLabel: {
-    fontSize: 14,
-    color: '#2563EB',
-    marginRight: 12,
-    fontWeight: '500',
-  },
-  dateBadge: {
-    backgroundColor: '#FF6900',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+  dateBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
   },
   dateBadgeText: {
-    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '600',
+    color: '#C2410C',
   },
-  statsRow: {
+  liveIndicatorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+  },
+  clockBannerMainRow: {
     flexDirection: 'row',
-    gap: 16,
-    marginBottom: 24,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 12,
-    paddingVertical: 18,
     alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 16,
+  },
+  heroDigitalTime: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: 0.5,
+  },
+  cameraWrapper: {
+    width: '100%',
+    height: 260,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 3,
+    borderColor: '#FF6900',
+    backgroundColor: '#000000',
+    position: 'relative',
+  },
+  expoCameraView: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  cameraOverlayFrame: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scannerActiveText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  summaryCard: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 16,
     borderWidth: 1,
     borderColor: '#F3F4F6',
   },
-  statCardTitle: {
-    fontSize: 13,
-    color: '#3B82F6',
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  statCardNumber: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1F2937',
-  },
-  listSectionTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#6B7280',
-    marginBottom: 14,
-  },
-  tableHeader: {
+  scannedResultBox: {
     flexDirection: 'row',
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-    marginBottom: 4,
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
   },
-  tableHeaderText: {
-    fontSize: 12,
-    fontWeight: '600',
+  scannedNameText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  scannedTypeBadge: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#047857',
+    marginTop: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  scannedTimeText: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#065F46',
+    marginTop: 4,
+  },
+  emptyScanBox: {
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  emptyScanText: {
+    fontSize: 13,
     color: '#9CA3AF',
-  },
-  tableRow: {
-    flexDirection: 'row',
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-    alignItems: 'center',
-  },
-  tableCellBold: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1F2937',
-  },
-  tableCell: {
-    fontSize: 13,
-    color: '#4B5563',
-  },
-  fabButton: {
-    position: 'absolute',
-    right: 20,
-    bottom: 80, // sits comfortably above the 60px bottom navigation bar
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: '#FF6900',
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    textAlign: 'center',
   },
 });

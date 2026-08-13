@@ -40,6 +40,12 @@
             "backgroundColor": "#00A86B"
           }
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Visagel to access your camera for wall-mounted face attendance scanning."
+        }
       ]
     ],
     "experiments": {
