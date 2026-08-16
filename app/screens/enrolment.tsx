@@ -18,6 +18,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as MailComposer from 'expo-mail-composer';
+import AppDateTimePicker from '@/components/AppDateTimePicker';
 
 const THEME_COLOR = '#FF6900';
 const THEME_COLOR_10_OPACITY = 'rgba(255, 105, 0, 0.1)';
@@ -27,6 +28,7 @@ interface EnrolmentItem {
   employeeId: string;
   name: string;
   phone: string;
+  joiningDate: string;
   photoUri: string | null;
 }
 
@@ -37,6 +39,7 @@ export default function EnrolmentScreen() {
       employeeId: 'BR-026',
       name: 'John Doe',
       phone: '9876543210',
+      joiningDate: '2026-08-01',
       photoUri: null,
     },
   ]);
@@ -48,8 +51,10 @@ export default function EnrolmentScreen() {
     employeeId: 'BR-027',
     name: '',
     phone: '',
+    joiningDate: new Date(),
   });
 
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [cameraVisible, setCameraVisible] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
 
@@ -101,6 +106,7 @@ export default function EnrolmentScreen() {
       employeeId: `BR-0${27 + enrolmentList.length}`,
       name: '',
       phone: '',
+      joiningDate: new Date(),
     });
     setCapturedPhoto(null);
     setModalVisible(true);
@@ -109,10 +115,12 @@ export default function EnrolmentScreen() {
 
   const handleOpenEditModal = (item: EnrolmentItem) => {
     setEditingId(item.id);
+    const parsedDate = item.joiningDate ? new Date(item.joiningDate) : new Date();
     setFormData({
       employeeId: item.employeeId,
       name: item.name,
       phone: item.phone,
+      joiningDate: isNaN(parsedDate.getTime()) ? new Date() : parsedDate,
     });
     setCapturedPhoto(item.photoUri);
     setModalVisible(true);
@@ -142,6 +150,8 @@ export default function EnrolmentScreen() {
       return;
     }
 
+    const joiningDateStr = formData.joiningDate.toISOString().split('T')[0];
+
     if (editingId) {
       setEnrolmentList(
         enrolmentList.map((item) =>
@@ -150,6 +160,7 @@ export default function EnrolmentScreen() {
                 ...item,
                 name: formData.name,
                 phone: formData.phone,
+                joiningDate: joiningDateStr,
                 photoUri: capturedPhoto,
               }
             : item
@@ -162,6 +173,7 @@ export default function EnrolmentScreen() {
         employeeId: formData.employeeId,
         name: formData.name,
         phone: formData.phone,
+        joiningDate: joiningDateStr,
         photoUri: capturedPhoto,
       };
 
@@ -176,26 +188,25 @@ export default function EnrolmentScreen() {
 
   const generateCsvFile = async (): Promise<string | null> => {
     try {
-      let csvHeader = 'Employee ID,Full Name,Phone Number,Face Mapped\n';
+      let csvHeader = 'Employee ID,Full Name,Phone Number,Joining Date,Face Mapped\n';
       let csvRows = enrolmentList
         .map(
           (item) =>
-            `"${item.employeeId}","${item.name}","${item.phone}","${item.photoUri ? 'Yes' : 'No'}"`
+            `"${item.employeeId}","${item.name}","${item.phone}","${item.joiningDate || 'N/A'}","${item.photoUri ? 'Yes' : 'No'}"`
         )
         .join('\n');
 
-      const csvString = csvHeader + csvRows;
       const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory;
       if (!baseDir) return null;
       
       const fileUri = `${baseDir}employee_enrolments.csv`;
 
-      await FileSystem.writeAsStringAsync(fileUri, csvString, {
+      await FileSystem.writeAsStringAsync(fileUri, csvHeader + csvRows, {
         encoding: 'utf8',
       });
 
       return fileUri;
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'Failed to generate CSV file.');
       return null;
     }
@@ -302,6 +313,12 @@ export default function EnrolmentScreen() {
                     <Text style={styles.rowPhone}>
                       <FontAwesome name="phone" size={11} color="#6B7280" /> {item.phone}
                     </Text>
+                    {item.joiningDate && (
+                      <View style={styles.rowDateTag}>
+                        <FontAwesome name="calendar" size={10} color="#6B7280" style={{ marginRight: 3 }} />
+                        <Text style={styles.rowDateText}>{item.joiningDate}</Text>
+                      </View>
+                    )}
                     {item.photoUri && (
                       <View style={styles.miniFaceTag}>
                         <FontAwesome name="camera" size={10} color={THEME_COLOR} style={{ marginRight: 3 }} />
@@ -406,6 +423,25 @@ export default function EnrolmentScreen() {
                 />
               </View>
 
+              {/* Joining Date Field */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Joining Date</Text>
+                <TouchableOpacity
+                  style={styles.datePickerInput}
+                  onPress={() => setShowDatePicker(true)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.datePickerInputText}>
+                    {formData.joiningDate.toLocaleDateString(undefined, {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric',
+                    })}
+                  </Text>
+                  <FontAwesome name="calendar" size={16} color={THEME_COLOR} />
+                </TouchableOpacity>
+              </View>
+
               {/* Face Capture Section */}
               <TouchableOpacity 
                 style={styles.faceCaptureButton} 
@@ -440,6 +476,19 @@ export default function EnrolmentScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Date Picker Modal for Joining Date */}
+      <AppDateTimePicker
+        visible={showDatePicker}
+        value={formData.joiningDate}
+        mode="date"
+        title="Select Joining Date"
+        themeColor={THEME_COLOR}
+        onChange={(selectedDate) => {
+          setFormData({ ...formData, joiningDate: selectedDate });
+        }}
+        onClose={() => setShowDatePicker(false)}
+      />
 
       {/* Camera Modal for Photo Capture */}
       <Modal visible={cameraVisible} animationType="slide" onRequestClose={() => setCameraVisible(false)}>
@@ -675,6 +724,36 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 14,
     color: '#1F2937',
+  },
+  datePickerInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  datePickerInputText: {
+    fontSize: 14,
+    color: '#1F2937',
+    fontWeight: '500',
+  },
+  rowDateTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  rowDateText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#6B7280',
   },
   disabledInput: {
     backgroundColor: '#F3F4F6',

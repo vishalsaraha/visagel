@@ -5,15 +5,12 @@ import {
   View,
   StatusBar,
   ActivityIndicator,
-  Dimensions,
   TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
-
-const { width } = Dimensions.get('window');
 
 export default function AttendanceScreen() {
   const router = useRouter();
@@ -31,7 +28,7 @@ export default function AttendanceScreen() {
         await requestPermission();
       }
     })();
-  }, [permission]);
+  }, [permission, requestPermission]);
 
   // Simulate automatic face scan loop for a wall-mounted kiosk
   useEffect(() => {

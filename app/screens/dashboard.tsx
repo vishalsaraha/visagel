@@ -5,23 +5,67 @@ import {
   View,
   ScrollView,
   StatusBar,
+  TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome } from '@expo/vector-icons';
+import * as Calendar from 'expo-calendar';
+import * as Sharing from 'expo-sharing';
+import * as FileSystem from 'expo-file-system/legacy';
+import AppDateTimePicker from '@/components/AppDateTimePicker';
 
 export default function DashboardScreen() {
+  const [date, setDate] = useState(new Date());
+  const [showPicker, setShowPicker] = useState(false);
   const [stats] = useState({
-    totalEnrolled: 26,
-    presentToday: 23,
-    absentToday: 3,
-    attendanceRate: '88.5%',
+    markedToday: 1,
+    totalEnrolled: 1,
   });
 
-  const recentActivity = [
-    { id: '1', name: 'Ravi Kiran', time: '09:30 AM', status: 'Present' },
-    { id: '2', name: 'Prabhu Raj Manoj', time: '09:32 AM', status: 'Present' },
-    { id: '3', name: 'Daniel Defoe', time: '09:45 AM', status: 'Present' },
+  const dailyReport = [
+    { id: '1', slNo: '5', name: 'vishal saran', timeIn: '08:42:09 am', timeOut: '08:42:18 am' },
   ];
+
+  const handleCalendarIntegration = async () => {
+    try {
+      const { status } = await Calendar.requestCalendarPermissionsAsync();
+      if (status === 'granted') {
+        const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+        Alert.alert('Calendar Success', `Found ${calendars.length} calendar(s) on device.`);
+      } else {
+        Alert.alert('Permission Denied', 'Calendar permission is required to sync events.');
+      }
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown calendar error occurred';
+      Alert.alert('Calendar Error', errMsg);
+    }
+  };
+
+  const exportToCSV = async () => {
+    try {
+      const csvContent = "SI No.,Name,Time In,Time Out\n" + 
+        dailyReport.map(r => `${r.slNo},${r.name},${r.timeIn},${r.timeOut}`).join("\n");
+      
+      const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+      if (!baseDir) {
+        Alert.alert('Error', 'Storage directory not available');
+        return;
+      }
+      const fileUri = `${baseDir}attendance_report.csv`;
+      await FileSystem.writeAsStringAsync(fileUri, csvContent);
+      
+      if (!(await Sharing.isAvailableAsync())) {
+        Alert.alert('Error', 'Sharing is not available on this device');
+        return;
+      }
+      
+      await Sharing.shareAsync(fileUri);
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown export error occurred';
+      Alert.alert('Export Failed', errMsg);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -29,70 +73,90 @@ export default function DashboardScreen() {
 
       {/* Header Title */}
       <View style={styles.headerContainer}>
-        <Text style={styles.headerTitle}>Analytics Dashboard</Text>
+        <Text style={styles.headerTitle}>Attendance Dashboard</Text>
         <View style={styles.headerUnderline} />
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* Date Selector Dropdown Button */}
+        <TouchableOpacity style={styles.dateSelector} onPress={() => setShowPicker(true)} activeOpacity={0.7}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <FontAwesome name="calendar" size={16} color="#FF6900" style={{ marginRight: 10 }} />
+            <Text style={styles.dateSelectorText}>{date.toDateString()}</Text>
+          </View>
+          <FontAwesome name="chevron-down" size={12} color="#9CA3AF" />
+        </TouchableOpacity>
+
+        <AppDateTimePicker
+          visible={showPicker}
+          value={date}
+          mode="date"
+          title="Select Attendance Date"
+          themeColor="#FF6900"
+          onChange={(newDate) => setDate(newDate)}
+          onClose={() => setShowPicker(false)}
+        />
+
         {/* Top Overview Cards */}
         <View style={styles.gridRow}>
           <View style={styles.metricCard}>
-            <View style={[styles.iconContainer, { backgroundColor: 'rgba(255, 105, 0, 0.1)' }]}>
-              <FontAwesome name="users" size={20} color="#FF6900" />
-            </View>
+            <Text style={styles.metricLabel}>Marked</Text>
+            <Text style={styles.metricValue}>{stats.markedToday}</Text>
+          </View>
+
+          <View style={styles.metricCard}>
+            <Text style={styles.metricLabel}>Enrolled</Text>
             <Text style={styles.metricValue}>{stats.totalEnrolled}</Text>
-            <Text style={styles.metricLabel}>Total Enrolled</Text>
-          </View>
-
-          <View style={styles.metricCard}>
-            <View style={[styles.iconContainer, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
-              <FontAwesome name="check-circle" size={20} color="#10B981" />
-            </View>
-            <Text style={styles.metricValue}>{stats.presentToday}</Text>
-            <Text style={styles.metricLabel}>Present Today</Text>
           </View>
         </View>
 
-        <View style={styles.gridRow}>
-          <View style={styles.metricCard}>
-            <View style={[styles.iconContainer, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
-              <FontAwesome name="times-circle" size={20} color="#EF4444" />
-            </View>
-            <Text style={styles.metricValue}>{stats.absentToday}</Text>
-            <Text style={styles.metricLabel}>Absent Today</Text>
-          </View>
+        {/* Action Buttons Row */}
+        <View style={styles.actionRow}>
+          <TouchableOpacity style={[styles.actionButton, { flex: 1 }]} onPress={exportToCSV} activeOpacity={0.8}>
+            <FontAwesome name="download" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+            <Text style={styles.actionButtonText}>Export CSV</Text>
+          </TouchableOpacity>
 
-          <View style={styles.metricCard}>
-            <View style={[styles.iconContainer, { backgroundColor: 'rgba(59, 130, 246, 0.1)' }]}>
-              <FontAwesome name="pie-chart" size={20} color="#3B82F6" />
-            </View>
-            <Text style={styles.metricValue}>{stats.attendanceRate}</Text>
-            <Text style={styles.metricLabel}>Attendance Rate</Text>
-          </View>
+          <TouchableOpacity style={[styles.actionButton, { flex: 1, backgroundColor: '#0A192F' }]} onPress={handleCalendarIntegration} activeOpacity={0.8}>
+            <FontAwesome name="calendar-check-o" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+            <Text style={styles.actionButtonText}>Sync Calendar</Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Recent Activity Section */}
-        <Text style={styles.sectionTitle}>Recent Check-Ins</Text>
+        {/* Daily Attendance Report Section */}
+        <Text style={styles.sectionTitle}>Daily Attendance Report</Text>
+
+        <View style={styles.tableHeaderRow}>
+          <Text style={[styles.tableHeaderText, { width: 50 }]}>SI No..</Text>
+          <Text style={[styles.tableHeaderText, { flex: 1 }]}>Name</Text>
+          <Text style={[styles.tableHeaderText, { width: 90 }]}>Time In</Text>
+          <Text style={[styles.tableHeaderText, { width: 90 }]}>Time Out</Text>
+        </View>
 
         <View style={styles.cardContainer}>
-          {recentActivity.map((item) => (
+          {dailyReport.map((item) => (
             <View key={item.id} style={styles.activityRow}>
-              <View style={styles.activityLeft}>
-                <View style={styles.avatarCircle}>
-                  <FontAwesome name="user" size={14} color="#6B7280" />
-                </View>
-                <View>
-                  <Text style={styles.activityName}>{item.name}</Text>
-                  <Text style={styles.activityTime}>{item.time}</Text>
-                </View>
-              </View>
-              <View style={styles.statusBadge}>
-                <Text style={styles.statusText}>{item.status}</Text>
-              </View>
+              <Text style={[styles.activityText, { width: 50, color: '#FF6900', fontWeight: '600' }]}>
+                {item.slNo}
+              </Text>
+              <Text style={[styles.activityText, { flex: 1, fontWeight: '600', color: '#1F2937' }]}>
+                {item.name}
+              </Text>
+              <Text style={[styles.activityText, { width: 90, color: '#4B5563' }]}>
+                {item.timeIn}
+              </Text>
+              <Text style={[styles.activityText, { width: 90, color: '#4B5563' }]}>
+                {item.timeOut}
+              </Text>
             </View>
           ))}
         </View>
       </ScrollView>
+
+      {/* Floating Action Button */}
+      <TouchableOpacity style={styles.fab} activeOpacity={0.8}>
+        <FontAwesome name="file-text" size={20} color="#FFFFFF" />
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -108,12 +172,12 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   headerTitle: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '700',
     color: '#0A192F',
   },
   headerUnderline: {
-    width: 30,
+    width: 35,
     height: 3,
     backgroundColor: '#FF6900',
     marginTop: 6,
@@ -121,7 +185,47 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 20,
-    paddingBottom: 90,
+    paddingBottom: 40,
+  },
+  dateSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1.5,
+    borderColor: '#FF6900',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 16,
+    backgroundColor: '#FFFFFF',
+  },
+  dateSelectorText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0A192F',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+  },
+  actionButton: {
+    flexDirection: 'row',
+    backgroundColor: '#FF6900',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  actionButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
   },
   gridRow: {
     flexDirection: 'row',
@@ -132,82 +236,68 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F9FAFB',
     borderRadius: 14,
-    padding: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    alignItems: 'center',
     borderWidth: 1,
     borderColor: '#F3F4F6',
-  },
-  iconContainer: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
-  metricValue: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#1F2937',
-    marginBottom: 2,
   },
   metricLabel: {
-    fontSize: 12,
+    fontSize: 14,
     color: '#6B7280',
     fontWeight: '500',
+    marginBottom: 8,
+  },
+  metricValue: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#1F2937',
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
-    color: '#374151',
-    marginTop: 10,
-    marginBottom: 12,
+    color: '#9CA3AF',
+    marginBottom: 16,
+  },
+  tableHeaderRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    marginBottom: 8,
+  },
+  tableHeaderText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#9CA3AF',
   },
   cardContainer: {
-    backgroundColor: '#F9FAFB',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#F3F4F6',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
   },
   activityRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
   },
-  activityLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  activityText: {
+    fontSize: 13,
   },
-  avatarCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#E5E7EB',
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#FF6900',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
-  },
-  activityName: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1F2937',
-  },
-  activityTime: {
-    fontSize: 11,
-    color: '#9CA3AF',
-  },
-  statusBadge: {
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#10B981',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4.65,
+    elevation: 8,
   },
 });

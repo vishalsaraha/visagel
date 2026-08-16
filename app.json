@@ -47,7 +47,8 @@
           "cameraPermission": "Allow Visagel to access your camera for wall-mounted face attendance scanning."
         }
       ],
-      "expo-mail-composer"
+      "expo-mail-composer",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,
