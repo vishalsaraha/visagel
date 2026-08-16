@@ -21,7 +21,11 @@
         "monochromeImage": "./assets/images/visagel.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "output": "static",
@@ -53,6 +57,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "c1b233f7-90a8-4d48-b5fb-8b1f4bd6899a"
+      }
+    },
+    "owner": "vishalsarah"
   }
 }
