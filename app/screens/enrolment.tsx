@@ -358,7 +358,7 @@ export default function EnrolmentScreen() {
           <View>
             <View style={styles.companyBadgeRow}>
               <FontAwesome name="building" size={12} color="#FF6900" style={{ marginRight: 5 }} />
-              <Text style={styles.companyNameText}>BRANZEPT</Text>
+              <Text style={styles.companyNameText}>Branzept</Text>
             </View>
             <Text style={styles.headerTitle}>Enrolment</Text>
             <View style={styles.headerUnderline} />
@@ -418,15 +418,15 @@ export default function EnrolmentScreen() {
             return (
               <TouchableOpacity
                 key={dept}
-                style={[styles.deptPill, isSelected && styles.deptPillActive]}
+                style={[styles.deptPill, isSelected ? styles.deptPillActive : styles.deptPillInactive]}
                 onPress={() => setSelectedDept(dept)}
                 activeOpacity={0.75}
               >
-                <Text style={[styles.deptPillText, isSelected && styles.deptPillTextActive]}>
+                <Text style={[styles.deptPillText, isSelected ? styles.deptPillTextActive : styles.deptPillTextInactive]}>
                   {dept}
                 </Text>
-                <View style={[styles.deptCountBadge, isSelected && styles.deptCountBadgeActive]}>
-                  <Text style={[styles.deptCountText, isSelected && styles.deptCountTextActive]}>
+                <View style={[styles.deptCountBadge, isSelected ? styles.deptCountBadgeActive : styles.deptCountBadgeInactive]}>
+                  <Text style={[styles.deptCountText, isSelected ? styles.deptCountTextActive : styles.deptCountTextInactive]}>
                     {count}
                   </Text>
                 </View>
@@ -589,22 +589,49 @@ export default function EnrolmentScreen() {
                 />
               </View>
 
-              {/* Department Picker Selector */}
+              {/* Department Picker Selector — 2-column icon grid */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Department *</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
-                  {DEPARTMENTS.filter(d => d !== 'All').map((dept) => (
-                    <TouchableOpacity
-                      key={dept}
-                      style={[styles.formDeptChip, formData.department === dept && styles.formDeptChipActive]}
-                      onPress={() => handleInputChange('department', dept)}
-                    >
-                      <Text style={[styles.formDeptChipText, formData.department === dept && styles.formDeptChipTextActive]}>
-                        {dept}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
+                <View style={styles.deptGridWrap}>
+                  {DEPARTMENTS.filter(d => d !== 'All').map((dept) => {
+                    const isActive = formData.department === dept;
+                    const deptMeta: Record<string, { icon: string; color: string; bg: string }> = {
+                      'Engineering':  { icon: 'cog',              color: '#2563EB', bg: '#EFF6FF' },
+                      'HR & Admin':   { icon: 'account-tie',      color: '#7C3AED', bg: '#F5F3FF' },
+                      'Design':       { icon: 'palette',          color: '#DB2777', bg: '#FDF2F8' },
+                      'Marketing':    { icon: 'bullhorn',         color: '#D97706', bg: '#FFFBEB' },
+                      'Finance':      { icon: 'currency-usd',     color: '#059669', bg: '#ECFDF5' },
+                      'Operations':   { icon: 'clipboard-list',   color: '#0284C7', bg: '#F0F9FF' },
+                    };
+                    const meta = deptMeta[dept] ?? { icon: 'briefcase', color: '#64748B', bg: '#F8FAFC' };
+                    return (
+                      <TouchableOpacity
+                        key={dept}
+                        style={[
+                          styles.deptGridCard,
+                          isActive && { backgroundColor: '#FF6900', borderColor: '#FF6900' },
+                          !isActive && { backgroundColor: '#FFFFFF', borderColor: '#E2E8F0' },
+                        ]}
+                        onPress={() => handleInputChange('department', dept)}
+                        activeOpacity={0.75}
+                      >
+                        <View style={[styles.deptGridIcon, isActive ? { backgroundColor: 'rgba(255,255,255,0.25)' } : { backgroundColor: meta.bg }]}>
+                          <MaterialCommunityIcons
+                            name={meta.icon as any}
+                            size={16}
+                            color={isActive ? '#FFFFFF' : meta.color}
+                          />
+                        </View>
+                        <Text style={[styles.deptGridLabel, isActive && styles.deptGridLabelActive]}>
+                          {dept}
+                        </Text>
+                        {isActive && (
+                          <MaterialCommunityIcons name="check-circle" size={13} color="rgba(255,255,255,0.9)" style={{ marginTop: 3 }} />
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
               </View>
 
               <View style={styles.inputGroup}>
@@ -843,28 +870,36 @@ const styles = StyleSheet.create({
   deptPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 20,
     gap: 6,
+    borderWidth: 1.5,
   },
   deptPillActive: {
     backgroundColor: '#FF6900',
     borderColor: '#FF6900',
+    shadowColor: '#FF6900',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  deptPillInactive: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#FFEDD5',
   },
   deptPillText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#64748B',
   },
   deptPillTextActive: {
     color: '#FFFFFF',
   },
+  deptPillTextInactive: {
+    color: '#C2410C',
+  },
   deptCountBadge: {
-    backgroundColor: '#E2E8F0',
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: 10,
@@ -872,12 +907,54 @@ const styles = StyleSheet.create({
   deptCountBadgeActive: {
     backgroundColor: 'rgba(255, 255, 255, 0.25)',
   },
+  deptCountBadgeInactive: {
+    backgroundColor: '#FFEDD5',
+  },
   deptCountText: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#475569',
   },
   deptCountTextActive: {
+    color: '#FFFFFF',
+  },
+  deptCountTextInactive: {
+    color: '#C2410C',
+  },
+  // Department grid selector in modal
+  deptGridWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
+  },
+  deptGridCard: {
+    width: '47%',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    gap: 6,
+    shadowColor: '#64748B',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  deptGridIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deptGridLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    textAlign: 'center',
+  },
+  deptGridLabelActive: {
     color: '#FFFFFF',
   },
   listContainer: {

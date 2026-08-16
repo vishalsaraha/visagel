@@ -216,7 +216,7 @@ export default function SettingsScreen() {
           <View>
             <View style={styles.companyBadgeRow}>
               <FontAwesome name="building" size={12} color="#FF6900" style={{ marginRight: 5 }} />
-              <Text style={styles.companyNameText}>BRANZEPT</Text>
+              <Text style={styles.companyNameText}>Branzept</Text>
             </View>
             <Text style={styles.headerTitle}>Settings</Text>
             <View style={styles.headerUnderline} />
@@ -256,7 +256,7 @@ export default function SettingsScreen() {
           </View>
           <View style={{ flex: 1, marginLeft: 14 }}>
             <Text style={styles.companyBannerPreTitle}>REGISTERED COMPANY</Text>
-            <Text style={styles.companyBannerMainTitle}>BRANZEPT</Text>
+            <Text style={styles.companyBannerMainTitle}>Branzept</Text>
             <View style={styles.companySystemBadge}>
               <MaterialCommunityIcons name="shield-check" size={12} color="#059669" style={{ marginRight: 4 }} />
               <Text style={styles.companySystemBadgeText}>Visagel Attendance System</Text>
@@ -476,7 +476,11 @@ export default function SettingsScreen() {
         {/* Footer */}
         <View style={styles.footerContainer}>
           <Text style={styles.versionText}>Visagel Attendance System • Version 1.0.0</Text>
-          <Text style={styles.brandTaglineText}>Powered by Branzept Technology</Text>
+          <View style={styles.poweredByFooterRow}>
+            <MaterialCommunityIcons name="lightning-bolt" size={11} color="#FF6900" style={{ marginRight: 3 }} />
+            <Text style={styles.brandTaglineText}>Powered by </Text>
+            <Text style={styles.brandTaglineAccent}>Branzept</Text>
+          </View>
         </View>
       </ScrollView>
 
@@ -1111,11 +1115,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#94A3B8',
   },
+  poweredByFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 5,
+  },
   brandTaglineText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '500',
-    color: '#CBD5E1',
-    marginTop: 2,
+    color: '#64748B',
+  },
+  brandTaglineAccent: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FF6900',
+    letterSpacing: 0.3,
   },
 
   // Modal backdrop

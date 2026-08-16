@@ -37,11 +37,11 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/visagel.png",
-          "imageWidth": 120,
+          "imageWidth": 150,
           "resizeMode": "contain",
-          "backgroundColor": "#0A192F",
+          "backgroundColor": "#060F1E",
           "dark": {
-            "backgroundColor": "#0A192F"
+            "backgroundColor": "#060F1E"
           }
         }
       ],

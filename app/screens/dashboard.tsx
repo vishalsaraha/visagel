@@ -100,7 +100,7 @@ export default function DashboardScreen() {
           <View>
             <View style={styles.companyBadgeRow}>
               <FontAwesome name="building" size={12} color="#FF6900" style={{ marginRight: 5 }} />
-              <Text style={styles.companyNameText}>BRANZEPT</Text>
+              <Text style={styles.companyNameText}>Branzept</Text>
             </View>
             <Text style={styles.headerTitle}>Attendance Report</Text>
             <View style={styles.headerUnderline} />
