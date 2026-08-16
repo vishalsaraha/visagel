@@ -356,6 +356,10 @@ export default function EnrolmentScreen() {
       <View style={styles.headerContainer}>
         <View style={styles.headerRow}>
           <View>
+            <View style={styles.companyBadgeRow}>
+              <FontAwesome name="building" size={12} color="#FF6900" style={{ marginRight: 5 }} />
+              <Text style={styles.companyNameText}>BRANZEPT</Text>
+            </View>
             <Text style={styles.headerTitle}>Enrolment</Text>
             <View style={styles.headerUnderline} />
           </View>
@@ -764,6 +768,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  companyBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  companyNameText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: THEME_COLOR,
+    letterSpacing: 1,
   },
   headerTitle: {
     fontSize: 22,

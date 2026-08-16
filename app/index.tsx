@@ -135,6 +135,10 @@ export default function AttendanceScreen() {
       <View style={styles.headerContainer}>
         <View style={styles.headerTopRow}>
           <View>
+            <View style={styles.companyBadgeRow}>
+              <FontAwesome name="building" size={12} color="#FF6900" style={{ marginRight: 5 }} />
+              <Text style={styles.companyNameText}>BRANZEPT</Text>
+            </View>
             <Text style={styles.headerTitle}>Attendance</Text>
             <View style={styles.headerUnderline} />
           </View>
@@ -247,7 +251,7 @@ export default function AttendanceScreen() {
               <Text style={styles.resultTime}>{lastScanned.time}</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
                 <MaterialCommunityIcons name="check-circle" size={12} color="#10B981" style={{ marginRight: 4 }} />
-                <Text style={styles.resultVerified}>Face recognition successful</Text>
+                <Text style={styles.resultVerified}>Face verified & attendance logged</Text>
                 {multipleTimeEntries && (
                   <View style={styles.punchCountPill}>
                     <Text style={styles.punchCountPillText}>#{lastScanned.punchCount || 1}</Text>
@@ -259,21 +263,21 @@ export default function AttendanceScreen() {
         ) : (
           <View style={styles.idleResultCard}>
             <MaterialCommunityIcons name="face-recognition" size={24} color="#CBD5E1" style={{ marginRight: 12 }} />
-            <Text style={styles.idleResultText}>Position face within frame to mark attendance</Text>
+            <Text style={styles.idleResultText}>Position face within frame to log attendance</Text>
           </View>
         )}
 
-        {/* Test scan button */}
+        {/* Scan & Mark Attendance button */}
         <TouchableOpacity
-          style={[styles.simulateScanBtn, scanPhase !== 'idle' && { borderColor: '#E2E8F0' }]}
+          style={[styles.simulateScanBtn, scanPhase !== 'idle' && { borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' }]}
           activeOpacity={0.8} onPress={triggerFaceScan} disabled={scanPhase !== 'idle'}
         >
           <MaterialCommunityIcons
-            name="face-recognition" size={15}
+            name="face-recognition" size={16}
             color={scanPhase !== 'idle' ? '#CBD5E1' : '#FF6900'} style={{ marginRight: 6 }}
           />
           <Text style={[styles.simulateScanBtnText, scanPhase !== 'idle' && { color: '#CBD5E1' }]}>
-            {scanPhase !== 'idle' ? 'Scanning...' : 'Test Scan (' + (multipleTimeEntries ? 'Multi-Punch' : 'Punch') + ')'}
+            {scanPhase !== 'idle' ? 'Recognizing Face...' : 'Scan Face to Log Attendance'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -295,6 +299,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#F1F5F9',
   },
   headerTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  companyBadgeRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
+  companyNameText: { fontSize: 11, fontWeight: '800', color: '#FF6900', letterSpacing: 1 },
   headerTitle: { fontSize: 22, fontWeight: '800', color: '#0A192F', letterSpacing: 0.3 },
   headerUnderline: { width: 32, height: 3, backgroundColor: '#FF6900', marginTop: 4, borderRadius: 2 },
   liveBadge: {

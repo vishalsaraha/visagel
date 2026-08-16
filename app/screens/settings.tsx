@@ -214,6 +214,10 @@ export default function SettingsScreen() {
       <View style={styles.headerContainer}>
         <View style={styles.headerRow}>
           <View>
+            <View style={styles.companyBadgeRow}>
+              <FontAwesome name="building" size={12} color="#FF6900" style={{ marginRight: 5 }} />
+              <Text style={styles.companyNameText}>BRANZEPT</Text>
+            </View>
             <Text style={styles.headerTitle}>Settings</Text>
             <View style={styles.headerUnderline} />
           </View>
@@ -245,212 +249,234 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.listContainer}>
-          {/* Manage Shifts */}
-          <TouchableOpacity style={styles.menuRow} activeOpacity={0.7} onPress={() => setManageShiftsVisible(true)}>
-            <View style={styles.menuRowLeft}>
-              <View style={styles.iconCircleWrapper}>
-                <MaterialCommunityIcons name="history" size={20} color={THEME_COLOR} />
-              </View>
-              <View>
-                <Text style={styles.menuTitleText}>Shifts</Text>
-                {activeShift && (
-                  <Text style={styles.menuSubText}>
-                    Active: {activeShift.name}
-                    {isNightShift(activeShift.startTime, activeShift.endTime) ? ' 🌙' : ' ☀️'}
-                  </Text>
-                )}
-              </View>
+        {/* Company Profile Banner */}
+        <View style={styles.companyBannerCard}>
+          <View style={styles.companyIconLargeBox}>
+            <FontAwesome name="building" size={24} color="#FFFFFF" />
+          </View>
+          <View style={{ flex: 1, marginLeft: 14 }}>
+            <Text style={styles.companyBannerPreTitle}>REGISTERED COMPANY</Text>
+            <Text style={styles.companyBannerMainTitle}>BRANZEPT</Text>
+            <View style={styles.companySystemBadge}>
+              <MaterialCommunityIcons name="shield-check" size={12} color="#059669" style={{ marginRight: 4 }} />
+              <Text style={styles.companySystemBadgeText}>Visagel Attendance System</Text>
             </View>
-            <View style={styles.shiftCountBadge}>
-              <Text style={styles.shiftCountText}>{shifts.length}</Text>
+          </View>
+        </View>
+
+        {/* SECTION 1: ATTENDANCE & SHIFTS */}
+        <View style={styles.sectionHeaderWrap}>
+          <Text style={styles.sectionHeadingText}>ATTENDANCE & SCANNING</Text>
+        </View>
+        <View style={styles.cardGroup}>
+          {/* Manage Shifts */}
+          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={() => setManageShiftsVisible(true)}>
+            <View style={[styles.iconBox, { backgroundColor: '#FFF7ED' }]}>
+              <MaterialCommunityIcons name="clock-outline" size={20} color="#FF6900" />
+            </View>
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Work Shifts</Text>
+              <Text style={styles.menuDescription}>
+                {activeShift ? `Active: ${activeShift.name} (${formatTime(activeShift.startTime)} - ${formatTime(activeShift.endTime)})` : 'Configure shifts & timings'}
+              </Text>
+            </View>
+            <View style={styles.shiftCountPill}>
+              <Text style={styles.shiftCountPillText}>{shifts.length} Shifts</Text>
+              <FontAwesome name="chevron-right" size={10} color="#94A3B8" style={{ marginLeft: 6 }} />
             </View>
           </TouchableOpacity>
 
-          <View style={styles.rowDivider} />
+          <View style={styles.cardDivider} />
 
           {/* Multiple Time Entries */}
-          <View style={styles.menuRow}>
-            <View style={styles.menuRowLeft}>
-              <View style={styles.iconCircleWrapper}>
-                <MaterialCommunityIcons name="clock-time-four-outline" size={20} color={THEME_COLOR} />
-              </View>
-              <Text style={styles.menuTitleText}>Multi-Punches</Text>
+          <View style={styles.menuCardRow}>
+            <View style={[styles.iconBox, { backgroundColor: '#EFF6FF' }]}>
+              <MaterialCommunityIcons name="clock-fast" size={20} color="#2563EB" />
+            </View>
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Multi-Punch Entry</Text>
+              <Text style={styles.menuDescription}>Allow multiple clock-in and out per day</Text>
             </View>
             <Switch
               value={multipleTimeEntries}
               onValueChange={setMultipleTimeEntries}
-              trackColor={{ false: '#E5E7EB', true: THEME_COLOR }}
+              trackColor={{ false: '#E2E8F0', true: THEME_COLOR }}
               thumbColor="#FFFFFF"
             />
           </View>
 
-          <View style={styles.rowDivider} />
+          <View style={styles.cardDivider} />
 
           {/* Auto Face Detection */}
-          <View style={styles.menuRow}>
-            <View style={styles.menuRowLeft}>
-              <View style={styles.iconCircleWrapper}>
-                <MaterialCommunityIcons name="face-recognition" size={20} color={THEME_COLOR} />
-              </View>
-              <Text style={styles.menuTitleText}>Auto Face Scan</Text>
+          <View style={styles.menuCardRow}>
+            <View style={[styles.iconBox, { backgroundColor: '#ECFDF5' }]}>
+              <MaterialCommunityIcons name="face-recognition" size={20} color="#059669" />
+            </View>
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Auto Face Scan</Text>
+              <Text style={styles.menuDescription}>Continuous auto-detection via camera</Text>
             </View>
             <Switch
               value={autoFaceDetection}
               onValueChange={setAutoFaceDetection}
-              trackColor={{ false: '#E5E7EB', true: THEME_COLOR }}
+              trackColor={{ false: '#E2E8F0', true: THEME_COLOR }}
               thumbColor="#FFFFFF"
             />
           </View>
 
-          <View style={styles.rowDivider} />
+          <View style={styles.cardDivider} />
 
           {/* Voice Scan Feedback */}
-          <View style={styles.menuRow}>
-            <View style={styles.menuRowLeft}>
-              <View style={styles.iconCircleWrapper}>
-                <MaterialCommunityIcons name="volume-high" size={20} color={THEME_COLOR} />
-              </View>
-              <Text style={styles.menuTitleText}>Voice Feedback</Text>
+          <View style={styles.menuCardRow}>
+            <View style={[styles.iconBox, { backgroundColor: '#FDF4FF' }]}>
+              <MaterialCommunityIcons name="volume-high" size={20} color="#A855F7" />
+            </View>
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Voice Audio Feedback</Text>
+              <Text style={styles.menuDescription}>Play audio chime on verified attendance</Text>
             </View>
             <Switch
               value={voiceFeedback}
               onValueChange={setVoiceFeedback}
-              trackColor={{ false: '#E5E7EB', true: THEME_COLOR }}
+              trackColor={{ false: '#E2E8F0', true: THEME_COLOR }}
               thumbColor="#FFFFFF"
             />
           </View>
+        </View>
 
-          <View style={styles.rowDivider} />
-
+        {/* SECTION 2: CLOUD & REPORTS */}
+        <View style={styles.sectionHeaderWrap}>
+          <Text style={styles.sectionHeadingText}>DATA & SYNC</Text>
+        </View>
+        <View style={styles.cardGroup}>
           {/* Send reports daily */}
-          <View style={styles.menuRow}>
-            <View style={styles.menuRowLeft}>
-              <View style={styles.iconCircleWrapper}>
-                <MaterialCommunityIcons name="email-check-outline" size={20} color={THEME_COLOR} />
-              </View>
-              <Text style={styles.menuTitleText}>Daily Reports</Text>
+          <View style={styles.menuCardRow}>
+            <View style={[styles.iconBox, { backgroundColor: '#FFFBEB' }]}>
+              <MaterialCommunityIcons name="email-check-outline" size={20} color="#D97706" />
+            </View>
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Daily Email Summary</Text>
+              <Text style={styles.menuDescription}>Email attendance reports automatically</Text>
             </View>
             <Switch
               value={sendReportsDaily}
               onValueChange={setSendReportsDaily}
-              trackColor={{ false: '#E5E7EB', true: THEME_COLOR }}
+              trackColor={{ false: '#E2E8F0', true: THEME_COLOR }}
               thumbColor="#FFFFFF"
             />
           </View>
 
-          <View style={styles.rowDivider} />
+          <View style={styles.cardDivider} />
 
           {/* Sync Attendance Records */}
-          <TouchableOpacity style={styles.menuRow} activeOpacity={0.7} onPress={() => setSyncModalVisible(true)}>
-            <View style={styles.menuRowLeft}>
-              <View style={styles.iconCircleWrapper}>
-                <MaterialCommunityIcons name="cloud-sync-outline" size={20} color={THEME_COLOR} />
-              </View>
-              <Text style={styles.menuTitleText}>Cloud Sync</Text>
+          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={() => setSyncModalVisible(true)}>
+            <View style={[styles.iconBox, { backgroundColor: '#EEF2FF' }]}>
+              <MaterialCommunityIcons name="cloud-sync-outline" size={20} color="#4F46E5" />
             </View>
-            <FontAwesome name="angle-right" size={18} color="#94A3B8" />
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Cloud Data Sync</Text>
+              <Text style={styles.menuDescription}>Backup or restore offline records</Text>
+            </View>
+            <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
           </TouchableOpacity>
+        </View>
 
-          <View style={styles.rowDivider} />
-
+        {/* SECTION 3: SECURITY & ADMIN */}
+        <View style={styles.sectionHeaderWrap}>
+          <Text style={styles.sectionHeadingText}>SECURITY & SYSTEM</Text>
+        </View>
+        <View style={styles.cardGroup}>
           {/* Admin Password */}
-          <TouchableOpacity style={styles.menuRow} activeOpacity={0.7} onPress={() => setPasswordModalVisible(true)}>
-            <View style={styles.menuRowLeft}>
-              <View style={styles.iconCircleWrapper}>
-                <MaterialCommunityIcons name="lock-outline" size={20} color={THEME_COLOR} />
-              </View>
-              <Text style={styles.menuTitleText}>Admin Password</Text>
+          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={() => setPasswordModalVisible(true)}>
+            <View style={[styles.iconBox, { backgroundColor: '#F8FAFC' }]}>
+              <MaterialCommunityIcons name="shield-key-outline" size={20} color="#334155" />
             </View>
-            <FontAwesome name="angle-right" size={18} color="#94A3B8" />
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Admin Password</Text>
+              <Text style={styles.menuDescription}>Change authentication credentials</Text>
+            </View>
+            <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
           </TouchableOpacity>
 
-          <View style={styles.rowDivider} />
+          <View style={styles.cardDivider} />
 
-          {/* Help */}
-          <TouchableOpacity style={styles.menuRow} activeOpacity={0.7} onPress={handleHelp}>
-            <View style={styles.menuRowLeft}>
-              <View style={styles.iconCircleWrapper}>
-                <MaterialCommunityIcons name="help-circle-outline" size={20} color={THEME_COLOR} />
-              </View>
-              <Text style={styles.menuTitleText}>Help</Text>
+          {/* Help & Support */}
+          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={handleHelp}>
+            <View style={[styles.iconBox, { backgroundColor: '#F0FDF4' }]}>
+              <MaterialCommunityIcons name="help-circle-outline" size={20} color="#16A34A" />
             </View>
-            <FontAwesome name="angle-right" size={18} color="#94A3B8" />
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Help & Support</Text>
+              <Text style={styles.menuDescription}>Guides, FAQs & contact support</Text>
+            </View>
+            <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
           </TouchableOpacity>
 
-          <View style={styles.rowDivider} />
+          <View style={styles.cardDivider} />
 
           {/* About Us */}
-          <TouchableOpacity style={styles.menuRow} activeOpacity={0.7} onPress={() => setAboutModalVisible(true)}>
-            <View style={styles.menuRowLeft}>
-              <View style={styles.iconCircleWrapper}>
-                <MaterialCommunityIcons name="information-outline" size={20} color={THEME_COLOR} />
-              </View>
-              <Text style={styles.menuTitleText}>About</Text>
+          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={() => setAboutModalVisible(true)}>
+            <View style={[styles.iconBox, { backgroundColor: '#F1F5F9' }]}>
+              <MaterialCommunityIcons name="information-outline" size={20} color="#475569" />
             </View>
-            <FontAwesome name="angle-right" size={18} color="#94A3B8" />
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>About Visagel</Text>
+              <Text style={styles.menuDescription}>Version, licenses and company info</Text>
+            </View>
+            <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
           </TouchableOpacity>
 
-          <View style={styles.rowDivider} />
+          <View style={styles.cardDivider} />
 
-          {/* Rate us */}
-          <TouchableOpacity style={styles.menuRow} activeOpacity={0.7} onPress={handleRateUs}>
-            <View style={styles.menuRowLeft}>
-              <View style={styles.iconCircleWrapper}>
-                <MaterialCommunityIcons name="star-outline" size={20} color={THEME_COLOR} />
-              </View>
-              <Text style={styles.menuTitleText}>Rate App</Text>
+          {/* Rate Us */}
+          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={handleRateUs}>
+            <View style={[styles.iconBox, { backgroundColor: '#FEF3C7' }]}>
+              <MaterialCommunityIcons name="star-outline" size={20} color="#F59E0B" />
             </View>
-            <FontAwesome name="angle-right" size={18} color="#94A3B8" />
-          </TouchableOpacity>
-
-          <View style={styles.rowDivider} />
-
-          {/* Lock & Return to Attendance Screen */}
-          <TouchableOpacity
-            style={styles.menuRow}
-            activeOpacity={0.7}
-            onPress={() => {
-              Alert.alert(
-                'Lock Screen',
-                'Lock Admin and return to Attendance Screen?',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  {
-                    text: 'Lock',
-                    style: 'destructive',
-                    onPress: () => {
-                      logout();
-                      router.replace('/');
-                    },
-                  },
-                ]
-              );
-            }}
-          >
-            <View style={styles.menuRowLeft}>
-              <View style={[styles.iconCircleWrapper, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
-                <MaterialCommunityIcons name="lock-reset" size={20} color="#EF4444" />
-              </View>
-              <Text style={[styles.menuTitleText, { color: '#EF4444' }]}>Lock</Text>
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Rate App</Text>
+              <Text style={styles.menuDescription}>Support us with a 5-star review</Text>
             </View>
-            <FontAwesome name="sign-out" size={18} color="#EF4444" />
+            <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
           </TouchableOpacity>
-
-          <View style={styles.rowDivider} />
         </View>
+
+        {/* Lock Screen Action Card */}
+        <TouchableOpacity
+          style={styles.lockActionCard}
+          activeOpacity={0.8}
+          onPress={() => {
+            Alert.alert(
+              'Lock Screen',
+              'Lock Admin and return to Attendance Screen?',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Lock',
+                  style: 'destructive',
+                  onPress: () => {
+                    logout();
+                    router.replace('/');
+                  },
+                },
+              ]
+            );
+          }}
+        >
+          <View style={styles.lockIconBox}>
+            <MaterialCommunityIcons name="lock-outline" size={20} color="#EF4444" />
+          </View>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={styles.lockCardTitle}>Lock HR Admin</Text>
+            <Text style={styles.lockCardSubtitle}>Return to attendance scanner</Text>
+          </View>
+          <FontAwesome name="sign-out" size={16} color="#EF4444" />
+        </TouchableOpacity>
 
         {/* Footer */}
         <View style={styles.footerContainer}>
-          <View style={styles.footerOrangeLine} />
-          <Text style={styles.versionText}>Version 1.0.0</Text>
-          <View style={styles.footerBrandRow}>
-            <FontAwesome name="building" size={12} color={THEME_COLOR} style={{ marginRight: 6 }} />
-            <Text style={styles.brandSubtitleText}>Branzept</Text>
-            <Text style={styles.brandDotSeparator}> • </Text>
-            <Text style={styles.brandSubtitleText}>Visagel</Text>
-          </View>
-          <Text style={styles.brandTaglineText}>Smart Face Attendance System</Text>
+          <Text style={styles.versionText}>Visagel Attendance System • Version 1.0.0</Text>
+          <Text style={styles.brandTaglineText}>Powered by Branzept Technology</Text>
         </View>
       </ScrollView>
 
@@ -870,26 +896,40 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   headerContainer: {
-    paddingHorizontal: 24,
-    paddingTop: 16,
-    paddingBottom: 12,
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 10,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  companyBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  companyNameText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: THEME_COLOR,
+    letterSpacing: 1,
+  },
   headerTitle: {
-    fontSize: 26,
+    fontSize: 22,
     fontWeight: '800',
     color: '#0A192F',
-    letterSpacing: -0.3,
+    letterSpacing: 0.3,
   },
   headerUnderline: {
-    width: 38,
-    height: 3.5,
+    width: 32,
+    height: 3,
     backgroundColor: THEME_COLOR,
-    marginTop: 6,
+    marginTop: 4,
     borderRadius: 2,
   },
   lockBtn: {
@@ -908,107 +948,173 @@ const styles = StyleSheet.create({
     color: '#EF4444',
   },
   scrollContent: {
-    paddingHorizontal: 24,
-    paddingTop: 8,
+    padding: 16,
     paddingBottom: 40,
   },
-  listContainer: {
-    backgroundColor: '#FFFFFF',
-  },
-  menuRow: {
+  companyBannerCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 18,
-  },
-  menuRowLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  iconCircleWrapper: {
-    width: 36,
-    height: 36,
+    backgroundColor: '#0A192F',
     borderRadius: 18,
-    backgroundColor: THEME_COLOR_10_OPACITY,
+    padding: 16,
+    marginBottom: 8,
+    shadowColor: '#0A192F',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  companyIconLargeBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: '#FF6900',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 14,
   },
-  menuTitleText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1E293B',
-    letterSpacing: 0.1,
+  companyBannerPreTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 1,
   },
-  menuSubText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#64748B',
+  companyBannerMainTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    letterSpacing: 1.2,
     marginTop: 1,
   },
-  shiftCountBadge: {
-    backgroundColor: THEME_COLOR_10_OPACITY,
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 105, 0, 0.25)',
-    marginLeft: 8,
-  },
-  shiftCountText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: THEME_COLOR,
-  },
-  rowDivider: {
-    height: 1,
-    backgroundColor: '#F1F5F9',
-  },
-
-  // Footer
-  footerContainer: {
-    alignItems: 'center',
-    marginTop: 36,
-    marginBottom: 24,
-    paddingTop: 20,
-  },
-  footerOrangeLine: {
-    width: 40,
-    height: 3,
-    backgroundColor: THEME_COLOR,
-    borderRadius: 2,
-    marginBottom: 12,
-  },
-  footerBrandRow: {
+  companySystemBadge: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
     marginTop: 4,
-    marginBottom: 4,
+    alignSelf: 'flex-start',
   },
-  versionText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#94A3B8',
-    marginBottom: 6,
-    letterSpacing: 0.3,
+  companySystemBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#34D399',
   },
-  brandSubtitleText: {
-    fontSize: 15,
+  sectionHeaderWrap: {
+    marginTop: 14,
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  sectionHeadingText: {
+    fontSize: 11,
     fontWeight: '800',
-    color: '#0A192F',
-    letterSpacing: 0.5,
+    color: '#64748B',
+    letterSpacing: 0.8,
   },
-  brandDotSeparator: {
-    fontSize: 15,
+  cardGroup: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    overflow: 'hidden',
+    shadowColor: '#64748B',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  menuCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  iconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  menuInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
+  menuTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  menuDescription: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  shiftCountPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  shiftCountPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FF6900',
+  },
+  cardDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginLeft: 64,
+  },
+  lockActionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1.5,
+    borderColor: '#FECACA',
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 20,
+  },
+  lockIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lockCardTitle: {
+    fontSize: 14,
     fontWeight: '800',
-    color: THEME_COLOR,
+    color: '#EF4444',
   },
-  brandTaglineText: {
+  lockCardSubtitle: {
     fontSize: 11,
     fontWeight: '500',
+    color: '#991B1B',
+    marginTop: 1,
+  },
+  footerContainer: {
+    alignItems: 'center',
+    marginTop: 28,
+    marginBottom: 20,
+  },
+  versionText: {
+    fontSize: 11,
+    fontWeight: '600',
     color: '#94A3B8',
-    letterSpacing: 0.2,
+  },
+  brandTaglineText: {
+    fontSize: 10,
+    fontWeight: '500',
+    color: '#CBD5E1',
     marginTop: 2,
   },
 
