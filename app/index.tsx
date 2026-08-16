@@ -15,6 +15,7 @@ import { useRouter } from 'expo-router';
 export default function AttendanceScreen() {
   const router = useRouter();
   const [currentTime, setCurrentTime] = useState<string>('');
+  const [currentDateStr, setCurrentDateStr] = useState<string>('');
   const [lastScanned, setLastScanned] = useState<{ name: string; time: string; type: string } | null>(null);
   
   // Expo Camera permission hook
@@ -29,6 +30,19 @@ export default function AttendanceScreen() {
       }
     })();
   }, [permission, requestPermission]);
+
+  // Dynamic date on mount
+  useEffect(() => {
+    const now = new Date();
+    setCurrentDateStr(
+      now.toLocaleDateString('en-US', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      })
+    );
+  }, []);
 
   // Simulate automatic face scan loop for a wall-mounted kiosk
   useEffect(() => {
@@ -102,7 +116,7 @@ export default function AttendanceScreen() {
           <View style={styles.clockBannerTopRow}>
             <View style={styles.dateBadgePill}>
               <MaterialCommunityIcons name="calendar-blank" size={14} color="#FF6900" style={{ marginRight: 6 }} />
-              <Text style={styles.dateBadgeText}>Thursday, 13 August 2026</Text>
+              <Text style={styles.dateBadgeText}>{currentDateStr || 'Today'}</Text>
             </View>
             <View style={styles.liveIndicatorDot} />
           </View>

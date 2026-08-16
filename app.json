@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "visagel",
+    "name": "Visagel",
     "slug": "visagel-face-attendance",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -15,7 +15,7 @@
     "android": {
       "package": "com.branzept.visagel",
       "adaptiveIcon": {
-        "backgroundColor": "#00A86B",
+        "backgroundColor": "#FF6900",
         "foregroundImage": "./assets/images/visagel.png",
         "backgroundImage": "./assets/images/visagel.png",
         "monochromeImage": "./assets/images/visagel.png"
@@ -33,11 +33,11 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/visagel.png",
-          "imageWidth": 200,
+          "imageWidth": 120,
           "resizeMode": "contain",
-          "backgroundColor": "#00A86B",
+          "backgroundColor": "#0A192F",
           "dark": {
-            "backgroundColor": "#00A86B"
+            "backgroundColor": "#0A192F"
           }
         }
       ],
