@@ -14,6 +14,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import { useAuth } from '@/context/AuthContext';
+import { useAttendance } from '@/context/AttendanceContext';
 import AppDateTimePicker from '@/components/AppDateTimePicker';
 
 const THEME_COLOR = '#FF6900';
@@ -77,8 +80,11 @@ const DEFAULT_SHIFTS: ShiftEntry[] = [
 ];
 
 export default function SettingsScreen() {
+  const router = useRouter();
+  const { adminPassword, updatePassword, logout } = useAuth();
+  const { multipleTimeEntries, setMultipleTimeEntries } = useAttendance();
+
   // Feature toggles
-  const [multipleTimeEntries, setMultipleTimeEntries] = useState(false);
   const [autoFaceDetection, setAutoFaceDetection] = useState(true);
   const [voiceFeedback, setVoiceFeedback] = useState(true);
   const [sendReportsDaily, setSendReportsDaily] = useState(false);
@@ -91,10 +97,11 @@ export default function SettingsScreen() {
   const [shiftFormVisible, setShiftFormVisible] = useState(false);
   const [editingShift, setEditingShift] = useState<ShiftEntry | null>(null);
 
-  const [pinModalVisible, setPinModalVisible] = useState(false);
+  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
   const [syncModalVisible, setSyncModalVisible] = useState(false);
   const [aboutModalVisible, setAboutModalVisible] = useState(false);
-  const [adminPin, setAdminPin] = useState('1234');
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   // Shift form fields
   const [formName, setFormName] = useState('');
@@ -205,8 +212,36 @@ export default function SettingsScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       <View style={styles.headerContainer}>
-        <Text style={styles.headerTitle}>Settings</Text>
-        <View style={styles.headerUnderline} />
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.headerTitle}>Settings</Text>
+            <View style={styles.headerUnderline} />
+          </View>
+          <TouchableOpacity
+            style={styles.lockBtn}
+            activeOpacity={0.8}
+            onPress={() => {
+              Alert.alert(
+                'Lock Screen',
+                'Lock Admin and return to Attendance Screen?',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Lock',
+                    style: 'destructive',
+                    onPress: () => {
+                      logout();
+                      router.replace('/');
+                    },
+                  },
+                ]
+              );
+            }}
+          >
+            <FontAwesome name="lock" size={13} color="#EF4444" style={{ marginRight: 6 }} />
+            <Text style={styles.lockBtnText}>Lock</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -218,11 +253,11 @@ export default function SettingsScreen() {
                 <MaterialCommunityIcons name="history" size={20} color={THEME_COLOR} />
               </View>
               <View>
-                <Text style={styles.menuTitleText}>Manage Shifts</Text>
+                <Text style={styles.menuTitleText}>Shifts</Text>
                 {activeShift && (
                   <Text style={styles.menuSubText}>
                     Active: {activeShift.name}
-                    {isNightShift(activeShift.startTime, activeShift.endTime) ? '  🌙' : '  ☀️'}
+                    {isNightShift(activeShift.startTime, activeShift.endTime) ? ' 🌙' : ' ☀️'}
                   </Text>
                 )}
               </View>
@@ -240,7 +275,7 @@ export default function SettingsScreen() {
               <View style={styles.iconCircleWrapper}>
                 <MaterialCommunityIcons name="clock-time-four-outline" size={20} color={THEME_COLOR} />
               </View>
-              <Text style={styles.menuTitleText}>Multiple Time Entries</Text>
+              <Text style={styles.menuTitleText}>Multi-Punches</Text>
             </View>
             <Switch
               value={multipleTimeEntries}
@@ -258,7 +293,7 @@ export default function SettingsScreen() {
               <View style={styles.iconCircleWrapper}>
                 <MaterialCommunityIcons name="face-recognition" size={20} color={THEME_COLOR} />
               </View>
-              <Text style={styles.menuTitleText}>Auto Face Detection</Text>
+              <Text style={styles.menuTitleText}>Auto Face Scan</Text>
             </View>
             <Switch
               value={autoFaceDetection}
@@ -276,7 +311,7 @@ export default function SettingsScreen() {
               <View style={styles.iconCircleWrapper}>
                 <MaterialCommunityIcons name="volume-high" size={20} color={THEME_COLOR} />
               </View>
-              <Text style={styles.menuTitleText}>Voice Scan Feedback</Text>
+              <Text style={styles.menuTitleText}>Voice Feedback</Text>
             </View>
             <Switch
               value={voiceFeedback}
@@ -294,7 +329,7 @@ export default function SettingsScreen() {
               <View style={styles.iconCircleWrapper}>
                 <MaterialCommunityIcons name="email-check-outline" size={20} color={THEME_COLOR} />
               </View>
-              <Text style={styles.menuTitleText}>Send reports daily</Text>
+              <Text style={styles.menuTitleText}>Daily Reports</Text>
             </View>
             <Switch
               value={sendReportsDaily}
@@ -312,20 +347,20 @@ export default function SettingsScreen() {
               <View style={styles.iconCircleWrapper}>
                 <MaterialCommunityIcons name="cloud-sync-outline" size={20} color={THEME_COLOR} />
               </View>
-              <Text style={styles.menuTitleText}>Sync Attendance Records</Text>
+              <Text style={styles.menuTitleText}>Cloud Sync</Text>
             </View>
             <FontAwesome name="angle-right" size={18} color="#94A3B8" />
           </TouchableOpacity>
 
           <View style={styles.rowDivider} />
 
-          {/* Admin PIN */}
-          <TouchableOpacity style={styles.menuRow} activeOpacity={0.7} onPress={() => setPinModalVisible(true)}>
+          {/* Admin Password */}
+          <TouchableOpacity style={styles.menuRow} activeOpacity={0.7} onPress={() => setPasswordModalVisible(true)}>
             <View style={styles.menuRowLeft}>
               <View style={styles.iconCircleWrapper}>
                 <MaterialCommunityIcons name="lock-outline" size={20} color={THEME_COLOR} />
               </View>
-              <Text style={styles.menuTitleText}>Admin PIN</Text>
+              <Text style={styles.menuTitleText}>Admin Password</Text>
             </View>
             <FontAwesome name="angle-right" size={18} color="#94A3B8" />
           </TouchableOpacity>
@@ -351,7 +386,7 @@ export default function SettingsScreen() {
               <View style={styles.iconCircleWrapper}>
                 <MaterialCommunityIcons name="information-outline" size={20} color={THEME_COLOR} />
               </View>
-              <Text style={styles.menuTitleText}>About Us</Text>
+              <Text style={styles.menuTitleText}>About</Text>
             </View>
             <FontAwesome name="angle-right" size={18} color="#94A3B8" />
           </TouchableOpacity>
@@ -364,9 +399,42 @@ export default function SettingsScreen() {
               <View style={styles.iconCircleWrapper}>
                 <MaterialCommunityIcons name="star-outline" size={20} color={THEME_COLOR} />
               </View>
-              <Text style={styles.menuTitleText}>Rate us on Google Play</Text>
+              <Text style={styles.menuTitleText}>Rate App</Text>
             </View>
             <FontAwesome name="angle-right" size={18} color="#94A3B8" />
+          </TouchableOpacity>
+
+          <View style={styles.rowDivider} />
+
+          {/* Lock & Return to Attendance Screen */}
+          <TouchableOpacity
+            style={styles.menuRow}
+            activeOpacity={0.7}
+            onPress={() => {
+              Alert.alert(
+                'Lock Screen',
+                'Lock Admin and return to Attendance Screen?',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Lock',
+                    style: 'destructive',
+                    onPress: () => {
+                      logout();
+                      router.replace('/');
+                    },
+                  },
+                ]
+              );
+            }}
+          >
+            <View style={styles.menuRowLeft}>
+              <View style={[styles.iconCircleWrapper, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
+                <MaterialCommunityIcons name="lock-reset" size={20} color="#EF4444" />
+              </View>
+              <Text style={[styles.menuTitleText, { color: '#EF4444' }]}>Lock</Text>
+            </View>
+            <FontAwesome name="sign-out" size={18} color="#EF4444" />
           </TouchableOpacity>
 
           <View style={styles.rowDivider} />
@@ -654,49 +722,103 @@ export default function SettingsScreen() {
         </View>
       </Modal>
 
-      {/* ===== PIN MODAL ===== */}
+      {/* ===== PASSWORD MODAL ===== */}
       <Modal
-        visible={pinModalVisible}
+        visible={passwordModalVisible}
         animationType="fade"
         transparent={true}
-        onRequestClose={() => setPinModalVisible(false)}
+        onRequestClose={() => {
+          setPasswordModalVisible(false);
+          setIsChangingPassword(false);
+          setNewPasswordInput('');
+        }}
       >
         <View style={[styles.modalBackdrop, { justifyContent: 'center' }]}>
           <View style={styles.alertCard}>
             <View style={styles.planBadge}>
               <Text style={styles.planBadgeText}>SECURITY</Text>
             </View>
-            <Text style={styles.planTitle}>Admin Kiosk PIN</Text>
-            <Text style={styles.planSubtitle}>Current default PIN for Admin Kiosk unlock is active.</Text>
-            <View style={styles.pinDisplayBox}>
-              <Text style={styles.pinDisplayText}>•••• ({adminPin})</Text>
-            </View>
-            <TouchableOpacity
-              style={[styles.closeAlertBtn, { backgroundColor: '#F1F5F9', marginBottom: 10 }]}
-              onPress={() => {
-                if (Alert.prompt) {
-                  Alert.prompt('Set New Admin PIN', 'Enter 4-digit security PIN:', [
-                    { text: 'Cancel', style: 'cancel' },
+            <Text style={styles.planTitle}>Admin Password</Text>
+            <Text style={styles.planSubtitle}>
+              {isChangingPassword
+                ? 'Enter new password for Admin access'
+                : 'Current admin password is active.'}
+            </Text>
+
+            {!isChangingPassword ? (
+              <>
+                <View style={styles.pinDisplayBox}>
+                  <Text style={styles.pinDisplayText}>•••••••• ({adminPassword})</Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.closeAlertBtn, { backgroundColor: '#F1F5F9', marginBottom: 10 }]}
+                  onPress={() => {
+                    setNewPasswordInput('');
+                    setIsChangingPassword(true);
+                  }}
+                >
+                  <Text style={[styles.closeAlertBtnText, { color: '#0A192F' }]}>Change Password</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.closeAlertBtn}
+                  onPress={() => {
+                    setPasswordModalVisible(false);
+                    setIsChangingPassword(false);
+                    setNewPasswordInput('');
+                  }}
+                >
+                  <Text style={styles.closeAlertBtnText}>Done</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <View style={{ width: '100%', alignItems: 'center' }}>
+                <TextInput
+                  style={[
+                    styles.formInput,
                     {
-                      text: 'Save',
-                      onPress: (newPin?: string) => {
-                        if (newPin && newPin.length === 4) {
-                          setAdminPin(newPin);
-                          Alert.alert('PIN Updated', 'New Admin PIN saved successfully.');
-                        }
-                      },
+                      textAlign: 'center',
+                      fontSize: 16,
+                      fontWeight: '700',
+                      width: '100%',
+                      marginVertical: 12,
                     },
-                  ]);
-                } else {
-                  Alert.alert('Admin PIN', `Current Admin Kiosk PIN is ${adminPin}`);
-                }
-              }}
-            >
-              <Text style={[styles.closeAlertBtnText, { color: '#0A192F' }]}>Change PIN</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.closeAlertBtn} onPress={() => setPinModalVisible(false)}>
-              <Text style={styles.closeAlertBtnText}>Done</Text>
-            </TouchableOpacity>
+                  ]}
+                  value={newPasswordInput}
+                  onChangeText={setNewPasswordInput}
+                  placeholder="Enter new password"
+                  placeholderTextColor="#94A3B8"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoFocus
+                />
+                <View style={{ flexDirection: 'row', gap: 10, width: '100%', marginTop: 8 }}>
+                  <TouchableOpacity
+                    style={[styles.closeAlertBtn, { flex: 1, backgroundColor: '#F1F5F9' }]}
+                    onPress={() => {
+                      setIsChangingPassword(false);
+                      setNewPasswordInput('');
+                    }}
+                  >
+                    <Text style={[styles.closeAlertBtnText, { color: '#64748B' }]}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.closeAlertBtn, { flex: 1, backgroundColor: THEME_COLOR }]}
+                    onPress={async () => {
+                      if (!newPasswordInput.trim()) {
+                        Alert.alert('Invalid', 'Password cannot be empty.');
+                        return;
+                      }
+                      await updatePassword(newPasswordInput);
+                      setIsChangingPassword(false);
+                      setNewPasswordInput('');
+                      Alert.alert('Saved', 'New admin password saved.');
+                    }}
+                  >
+                    <Text style={styles.closeAlertBtnText}>Save</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
           </View>
         </View>
       </Modal>
@@ -752,6 +874,11 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 12,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   headerTitle: {
     fontSize: 26,
     fontWeight: '800',
@@ -764,6 +891,21 @@ const styles = StyleSheet.create({
     backgroundColor: THEME_COLOR,
     marginTop: 6,
     borderRadius: 2,
+  },
+  lockBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+  },
+  lockBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#EF4444',
   },
   scrollContent: {
     paddingHorizontal: 24,
