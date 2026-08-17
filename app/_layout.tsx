@@ -108,8 +108,10 @@ export default function RootLayout() {
               borderTopWidth: 0,
               elevation: 0,
               height: 60,
-              paddingBottom: 8,
-              paddingTop: 8,
+            },
+            tabBarItemStyle: {
+              justifyContent: "center",
+              paddingVertical: 5,
             },
             tabBarActiveTintColor: "#FFFFFF",
             tabBarInactiveTintColor: "rgba(255, 255, 255, 0.7)",

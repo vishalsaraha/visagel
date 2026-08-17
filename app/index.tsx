@@ -192,9 +192,6 @@ export default function AttendanceScreen() {
                 <Animated.View style={[styles.corner, styles.cornerTR, { opacity: cornerOpacity, borderColor: boxColor }]} />
                 <Animated.View style={[styles.corner, styles.cornerBL, { opacity: cornerOpacity, borderColor: boxColor }]} />
                 <Animated.View style={[styles.corner, styles.cornerBR, { opacity: cornerOpacity, borderColor: boxColor }]} />
-                <View style={[styles.centerDot, { backgroundColor: boxColor }]} />
-                <View style={[styles.crossH, { backgroundColor: boxColor + '55' }]} />
-                <View style={[styles.crossV, { backgroundColor: boxColor + '55' }]} />
               </Animated.View>
             )}
 
