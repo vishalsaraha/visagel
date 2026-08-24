@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Alert,
   Modal,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -24,17 +25,56 @@ const THEME_COLOR = '#FF6900';
 export default function DashboardScreen() {
   const router = useRouter();
   const { logout } = useAuth();
-  const { attendanceRecords, multipleTimeEntries, recordPunch } = useAttendance();
+  const { attendanceRecords, multipleTimeEntries, recordPunch, removePunch, departments } = useAttendance();
   const [date, setDate] = useState(new Date());
   const [showPicker, setShowPicker] = useState(false);
   const [selectedEmpPunches, setSelectedEmpPunches] = useState<EmployeeAttendance | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedDept, setSelectedDept] = useState('All');
 
   const selectedDateStr = date.toISOString().split('T')[0];
   const dayRecords = attendanceRecords.filter((r) => r.date === selectedDateStr);
 
+  // Dept filter list (always has 'All' first)
+  const deptList = ['All', ...departments];
+
+  // Filtered records applying dept filter + search
+  const filteredRecords = dayRecords.filter((r) => {
+    const matchesDept = selectedDept === 'All' || r.department === selectedDept;
+    const q = searchQuery.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      r.name.toLowerCase().includes(q) ||
+      r.employeeId.toLowerCase().includes(q);
+    return matchesDept && matchesSearch;
+  });
+
   const stats = {
     markedToday: dayRecords.length,
     totalEnrolled: Math.max(dayRecords.length, 2),
+  };
+
+  const handleDeletePunch = (employeeId: string, date: string, punchId: string, punchTime: string) => {
+    Alert.alert(
+      'Remove Punch',
+      `Remove the ${punchTime} punch entry for this employee?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            await removePunch(employeeId, date, punchId);
+            // Update the local modal state so it re-renders immediately
+            setSelectedEmpPunches((prev) =>
+              prev
+                ? { ...prev, punches: prev.punches.filter((p) => p.id !== punchId) }
+                : null
+            );
+          },
+        },
+      ]
+    );
   };
 
   const handleCalendarIntegration = async () => {
@@ -191,6 +231,56 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Department Filter + Search Bar */}
+        <View style={styles.filterContainer}>
+          {/* Search input */}
+          <View style={styles.searchBox}>
+            <FontAwesome name="search" size={13} color="#94A3B8" style={{ marginRight: 8 }} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search name or Employee ID…"
+              placeholderTextColor="#94A3B8"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoCapitalize="none"
+              returnKeyType="search"
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <FontAwesome name="times-circle" size={14} color="#CBD5E1" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Department pills */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.deptScroll}
+          >
+            {deptList.map((dept) => (
+              <TouchableOpacity
+                key={dept}
+                style={[
+                  styles.deptPill,
+                  selectedDept === dept ? styles.deptPillActive : styles.deptPillInactive,
+                ]}
+                onPress={() => setSelectedDept(dept)}
+                activeOpacity={0.75}
+              >
+                <Text
+                  style={[
+                    styles.deptPillText,
+                    selectedDept === dept ? styles.deptPillTextActive : styles.deptPillTextInactive,
+                  ]}
+                >
+                  {dept}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
         {/* Daily Attendance Report Section */}
         <View style={styles.reportSectionHeader}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -210,15 +300,21 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {dayRecords.length === 0 ? (
+        {filteredRecords.length === 0 ? (
           <View style={styles.emptyCard}>
             <MaterialCommunityIcons name="clipboard-text-off-outline" size={36} color="#CBD5E1" style={{ marginBottom: 8 }} />
-            <Text style={styles.emptyTitle}>No Attendance Records</Text>
-            <Text style={styles.emptySubtitle}>No one has marked attendance for {date.toLocaleDateString()}</Text>
+            <Text style={styles.emptyTitle}>
+              {dayRecords.length === 0 ? 'No Attendance Records' : 'No Matching Records'}
+            </Text>
+            <Text style={styles.emptySubtitle}>
+              {dayRecords.length === 0
+                ? `No one has marked attendance for ${date.toLocaleDateString()}`
+                : 'Try adjusting the search or department filter'}
+            </Text>
           </View>
         ) : (
           <View style={styles.cardsList}>
-            {dayRecords.map((item, index) => {
+            {filteredRecords.map((item, index) => {
               const firstIn = item.punches.find((p) => p.type === 'IN')?.time || '--:--';
               const lastOut = [...item.punches].reverse().find((p) => p.type === 'OUT')?.time || '--:--';
 
@@ -301,28 +397,45 @@ export default function DashboardScreen() {
 
             <View style={styles.punchTimelineList}>
               <Text style={styles.timelineSectionTitle}>Punches Log ({selectedEmpPunches?.punches.length})</Text>
-              {selectedEmpPunches?.punches.map((punch, pIdx) => (
-                <View key={punch.id} style={styles.timelineRow}>
-                  <View style={[styles.punchTypeDot, punch.type === 'IN' ? styles.inDot : styles.outDot]}>
-                    <MaterialCommunityIcons
-                      name={punch.type === 'IN' ? 'login' : 'logout'}
-                      size={13}
-                      color="#FFFFFF"
-                    />
+              <ScrollView style={{ maxHeight: 260 }} showsVerticalScrollIndicator={false}>
+                {selectedEmpPunches?.punches.map((punch, pIdx) => (
+                  <View key={punch.id} style={styles.timelineRow}>
+                    <View style={[styles.punchTypeDot, punch.type === 'IN' ? styles.inDot : styles.outDot]}>
+                      <MaterialCommunityIcons
+                        name={punch.type === 'IN' ? 'login' : 'logout'}
+                        size={13}
+                        color="#FFFFFF"
+                      />
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={styles.punchTypeTitle}>
+                        {punch.type === 'IN' ? 'Time In' : 'Time Out'}
+                      </Text>
+                      <Text style={styles.punchTimeSubtitle}>{punch.time}</Text>
+                    </View>
+                    <View style={[styles.punchTag, punch.type === 'IN' ? styles.inTag : styles.outTag]}>
+                      <Text style={[styles.punchTagText, punch.type === 'IN' ? styles.inTagText : styles.outTagText]}>
+                        Punch #{pIdx + 1}
+                      </Text>
+                    </View>
+                    {/* Delete punch button */}
+                    <TouchableOpacity
+                      style={styles.deletePunchBtn}
+                      onPress={() =>
+                        handleDeletePunch(
+                          selectedEmpPunches!.employeeId,
+                          selectedEmpPunches!.date,
+                          punch.id,
+                          punch.time
+                        )
+                      }
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <MaterialCommunityIcons name="trash-can-outline" size={16} color="#EF4444" />
+                    </TouchableOpacity>
                   </View>
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.punchTypeTitle}>
-                      {punch.type === 'IN' ? 'Time In' : 'Time Out'}
-                    </Text>
-                    <Text style={styles.punchTimeSubtitle}>{punch.time}</Text>
-                  </View>
-                  <View style={[styles.punchTag, punch.type === 'IN' ? styles.inTag : styles.outTag]}>
-                    <Text style={[styles.punchTagText, punch.type === 'IN' ? styles.inTagText : styles.outTagText]}>
-                      Punch #{pIdx + 1}
-                    </Text>
-                  </View>
-                </View>
-              ))}
+                ))}
+              </ScrollView>
             </View>
 
             <TouchableOpacity
@@ -806,5 +919,67 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  // ── New: Filter & Search styles ──────────────────────────────────────────
+  filterContainer: {
+    marginBottom: 14,
+    gap: 10,
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0F172A',
+    padding: 0,
+  },
+  deptScroll: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  deptPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1.5,
+  },
+  deptPillActive: {
+    backgroundColor: '#FF6900',
+    borderColor: '#FF6900',
+  },
+  deptPillInactive: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E2E8F0',
+  },
+  deptPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  deptPillTextActive: {
+    color: '#FFFFFF',
+  },
+  deptPillTextInactive: {
+    color: '#64748B',
+  },
+  // ── New: Delete punch button ─────────────────────────────────────────────
+  deletePunchBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#FEF2F2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+    borderWidth: 1,
+    borderColor: '#FECACA',
   },
 });

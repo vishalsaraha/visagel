@@ -17,6 +17,7 @@ import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
+import { useAttendance, EnrolledEmployee } from '@/context/AttendanceContext';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as MailComposer from 'expo-mail-composer';
@@ -25,51 +26,21 @@ import AppDateTimePicker from '@/components/AppDateTimePicker';
 const THEME_COLOR = '#FF6900';
 const THEME_COLOR_10_OPACITY = 'rgba(255, 105, 0, 0.1)';
 
-const DEPARTMENTS = ['All', 'Engineering', 'HR & Admin', 'Design', 'Marketing', 'Finance', 'Operations'] as const;
-type Department = typeof DEPARTMENTS[number];
-
-interface EnrolmentItem {
-  id: string;
-  employeeId: string;
-  name: string;
-  department: string;
-  phone: string;
-  joiningDate: string;
-  photoUri: string | null;
-}
 
 export default function EnrolmentScreen() {
   const router = useRouter();
-  const { logout } = useAuth();
-  const [enrolmentList, setEnrolmentList] = useState<EnrolmentItem[]>([
-    {
-      id: '1',
-      employeeId: 'BR-026',
-      name: 'John Doe',
-      department: 'Engineering',
-      phone: '9876543210',
-      joiningDate: '2026-08-01',
-      photoUri: null,
-    },
-    {
-      id: '2',
-      employeeId: 'BR-027',
-      name: 'Sarah Connor',
-      department: 'Design',
-      phone: '9876543211',
-      joiningDate: '2026-08-10',
-      photoUri: null,
-    },
-    {
-      id: '3',
-      employeeId: 'BR-028',
-      name: 'Michael Scott',
-      department: 'HR & Admin',
-      phone: '9876543212',
-      joiningDate: '2026-08-12',
-      photoUri: null,
-    },
-  ]);
+  const { logout, verifyPassword } = useAuth();
+  const {
+    enrolledEmployees,
+    addEnrolledEmployee,
+    updateEnrolledEmployee,
+    deleteEnrolledEmployee,
+    departments: contextDepts,
+  } = useAttendance();
+
+  // Build dept list: always include 'All' at front
+  const DEPT_FILTER_LIST = ['All', ...contextDepts] as const;
+  type Department = (typeof DEPT_FILTER_LIST)[number];
 
   const [selectedDept, setSelectedDept] = useState<Department>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -79,7 +50,7 @@ export default function EnrolmentScreen() {
   const [formData, setFormData] = useState({
     employeeId: 'BR-029',
     name: '',
-    department: 'Engineering',
+    department: contextDepts[0] || 'Engineering',
     phone: '',
     joiningDate: new Date(),
   });
@@ -160,9 +131,9 @@ export default function EnrolmentScreen() {
   const handleOpenAddModal = () => {
     setEditingId(null);
     setFormData({
-      employeeId: `BR-0${26 + enrolmentList.length + 1}`,
+      employeeId: `BR-0${(26 + enrolledEmployees.length + 1).toString().padStart(2, '0')}`,
       name: '',
-      department: selectedDept === 'All' ? 'Engineering' : selectedDept,
+      department: selectedDept === 'All' ? (contextDepts[0] || 'Engineering') : selectedDept,
       phone: '',
       joiningDate: new Date(),
     });
@@ -171,7 +142,7 @@ export default function EnrolmentScreen() {
     toggleDock();
   };
 
-  const handleOpenEditModal = (item: EnrolmentItem) => {
+  const handleOpenEditModal = (item: EnrolledEmployee) => {
     setEditingId(item.id);
     const parsedDate = item.joiningDate ? new Date(item.joiningDate) : new Date();
     setFormData({
@@ -194,8 +165,8 @@ export default function EnrolmentScreen() {
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => {
-            setEnrolmentList(enrolmentList.filter((item) => item.id !== id));
+          onPress: async () => {
+            await deleteEnrolledEmployee(id);
             Alert.alert('Deleted', 'Enrolment record removed successfully.');
           },
         },
@@ -203,43 +174,48 @@ export default function EnrolmentScreen() {
     );
   };
 
-  const handleEnrolment = () => {
+  const handleEnrolment = async () => {
+    if (!formData.employeeId.trim()) {
+      Alert.alert('Error', 'Please enter an Employee ID.');
+      return;
+    }
     if (!formData.name || !formData.phone) {
       Alert.alert('Error', 'Please fill in Employee Name and Phone Number.');
       return;
     }
 
+    // Uniqueness check for Employee ID (only when adding new)
+    if (!editingId) {
+      const duplicate = enrolledEmployees.find(
+        (e) => e.employeeId.toLowerCase() === formData.employeeId.trim().toLowerCase()
+      );
+      if (duplicate) {
+        Alert.alert('Duplicate ID', `Employee ID "${formData.employeeId.trim()}" already exists. Please choose a different ID.`);
+        return;
+      }
+    }
+
     const joiningDateStr = formData.joiningDate.toISOString().split('T')[0];
 
     if (editingId) {
-      setEnrolmentList(
-        enrolmentList.map((item) =>
-          item.id === editingId
-            ? {
-                ...item,
-                name: formData.name,
-                department: formData.department,
-                phone: formData.phone,
-                joiningDate: joiningDateStr,
-                photoUri: capturedPhoto,
-              }
-            : item
-        )
-      );
-      Alert.alert('Success', `Successfully updated ${formData.name}!`);
-    } else {
-      const newEnrolment: EnrolmentItem = {
-        id: Date.now().toString(),
-        employeeId: formData.employeeId,
+      await updateEnrolledEmployee(editingId, {
         name: formData.name,
         department: formData.department,
         phone: formData.phone,
         joiningDate: joiningDateStr,
         photoUri: capturedPhoto,
-      };
-
-      setEnrolmentList([newEnrolment, ...enrolmentList]);
-      Alert.alert('Success', `Successfully enrolled ${formData.name} (${formData.employeeId})!`);
+      });
+      Alert.alert('Success', `Successfully updated ${formData.name}!`);
+    } else {
+      await addEnrolledEmployee({
+        employeeId: formData.employeeId.trim(),
+        name: formData.name,
+        department: formData.department,
+        phone: formData.phone,
+        joiningDate: joiningDateStr,
+        photoUri: capturedPhoto,
+      });
+      Alert.alert('Success', `Successfully enrolled ${formData.name} (${formData.employeeId.trim()})!`);
     }
 
     setModalVisible(false);
@@ -319,7 +295,7 @@ export default function EnrolmentScreen() {
   };
 
   // Filtered employees list based on Department and Search
-  const filteredList = enrolmentList.filter((item) => {
+  const filteredList = enrolledEmployees.filter((item) => {
     const matchesDept = selectedDept === 'All' || item.department === selectedDept;
     const matchesSearch =
       item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -412,14 +388,14 @@ export default function EnrolmentScreen() {
       {/* Department Filter Horizontal Tabs */}
       <View style={styles.deptFilterContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.deptFilterScroll}>
-          {DEPARTMENTS.map((dept) => {
+          {DEPT_FILTER_LIST.map((dept) => {
             const isSelected = selectedDept === dept;
-            const count = dept === 'All' ? enrolmentList.length : enrolmentList.filter((e) => e.department === dept).length;
+            const count = dept === 'All' ? enrolledEmployees.length : enrolledEmployees.filter((e) => e.department === dept).length;
             return (
               <TouchableOpacity
                 key={dept}
                 style={[styles.deptPill, isSelected ? styles.deptPillActive : styles.deptPillInactive]}
-                onPress={() => setSelectedDept(dept)}
+                onPress={() => setSelectedDept(dept as Department)}
                 activeOpacity={0.75}
               >
                 <Text style={[styles.deptPillText, isSelected ? styles.deptPillTextActive : styles.deptPillTextInactive]}>
@@ -570,12 +546,19 @@ export default function EnrolmentScreen() {
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Employee ID</Text>
+                <Text style={styles.label}>Employee ID {editingId ? '' : '*'}</Text>
                 <TextInput
-                  style={[styles.input, styles.disabledInput]}
+                  style={[styles.input, editingId ? styles.disabledInput : null]}
                   value={formData.employeeId}
-                  editable={false}
+                  editable={!editingId}
+                  placeholder="e.g. BR-030"
+                  placeholderTextColor="#9CA3AF"
+                  autoCapitalize="characters"
+                  onChangeText={(text) => handleInputChange('employeeId', text)}
                 />
+                {!editingId && (
+                  <Text style={styles.inputHint}>You can customize the Employee ID before saving.</Text>
+                )}
               </View>
 
               <View style={styles.inputGroup}>
@@ -589,11 +572,10 @@ export default function EnrolmentScreen() {
                 />
               </View>
 
-              {/* Department Picker Selector — 2-column icon grid */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Department *</Text>
                 <View style={styles.deptGridWrap}>
-                  {DEPARTMENTS.filter(d => d !== 'All').map((dept) => {
+                  {contextDepts.map((dept) => {
                     const isActive = formData.department === dept;
                     const deptMeta: Record<string, { icon: string; color: string; bg: string }> = {
                       'Engineering':  { icon: 'cog',              color: '#2563EB', bg: '#EFF6FF' },
@@ -742,25 +724,13 @@ export default function EnrolmentScreen() {
 
             {/* Centered Face Detection Guide Reticle */}
             <View style={styles.reticleWrapper} pointerEvents="none">
-              <Animated.View style={[styles.reticleBox, { transform: [{ scale: pulseAnim }] }]}>
+              <View style={styles.reticleBox}>
                 {/* 4 Corners */}
                 <View style={[styles.camCorner, styles.camCornerTL]} />
                 <View style={[styles.camCorner, styles.camCornerTR]} />
                 <View style={[styles.camCorner, styles.camCornerBL]} />
                 <View style={[styles.camCorner, styles.camCornerBR]} />
-
-                {/* Reticle guide line */}
-                <Animated.View style={[styles.scanningLaser, {
-                  transform: [{
-                    translateY: reticleAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-100, 100],
-                    }),
-                  }],
-                }]} />
-
-                <View style={styles.reticleCenterDot} />
-              </Animated.View>
+              </View>
               <Text style={styles.reticleHintText}>Align face clearly within corners</Text>
             </View>
 
@@ -1221,6 +1191,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     color: '#64748B',
     fontWeight: '700',
+  },
+  inputHint: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 4,
+    fontWeight: '500',
   },
   formDeptChip: {
     paddingHorizontal: 12,

@@ -16,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
-import { useAttendance } from '@/context/AttendanceContext';
+import { useAttendance, ShiftEntry, CustomField } from '@/context/AttendanceContext';
 import AppDateTimePicker from '@/components/AppDateTimePicker';
 
 const THEME_COLOR = '#FF6900';
@@ -24,73 +24,45 @@ const THEME_COLOR_10_OPACITY = 'rgba(255, 105, 0, 0.1)';
 const NIGHT_COLOR = '#6366F1';
 const NIGHT_COLOR_10 = 'rgba(99, 102, 241, 0.1)';
 
-// --------------- Types ---------------
-interface ShiftEntry {
-  id: string;
-  name: string;
-  startTime: Date;
-  endTime: Date;
-  lateCutoff: Date;
-  isActive: boolean;
+// Helper: detect night shift (end hour before start hour → crosses midnight)
+function isNightShift(startH: number, endH: number): boolean {
+  return endH <= startH;
 }
 
-// Helper: detect night shift (end time is before start time → crosses midnight)
-function isNightShift(start: Date, end: Date): boolean {
-  const startMins = start.getHours() * 60 + start.getMinutes();
-  const endMins = end.getHours() * 60 + end.getMinutes();
-  return endMins <= startMins;
+// Format h/m as "h:mm AM/PM"
+function formatTime(h: number, m: number): string {
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-// Format a Date as h:mm AM/PM
-function formatTime(d: Date): string {
-  let hours = d.getHours();
-  const minutes = d.getMinutes();
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12;
-  hours = hours ? hours : 12;
-  const minutesStr = minutes < 10 ? '0' + minutes : minutes;
-  return `${hours}:${minutesStr} ${ampm}`;
-}
-
-// Build a Date with given h:mm
+// Build a Date with given h:mm (for the time picker)
 function makeTime(h: number, m: number): Date {
   const d = new Date();
   d.setHours(h, m, 0, 0);
   return d;
 }
 
-// Default shifts
-const DEFAULT_SHIFTS: ShiftEntry[] = [
-  {
-    id: '1',
-    name: 'Day Shift',
-    startTime: makeTime(9, 0),
-    endTime: makeTime(18, 0),
-    lateCutoff: makeTime(9, 30),
-    isActive: true,
-  },
-  {
-    id: '2',
-    name: 'Night Shift',
-    startTime: makeTime(21, 0),
-    endTime: makeTime(6, 0),
-    lateCutoff: makeTime(21, 30),
-    isActive: false,
-  },
-];
-
 export default function SettingsScreen() {
   const router = useRouter();
-  const { adminPassword, updatePassword, logout } = useAuth();
-  const { multipleTimeEntries, setMultipleTimeEntries } = useAttendance();
+  const {
+    adminPassword,
+    adminAccounts,
+    addAdminAccount,
+    removeAdminAccount,
+    updateAdminAccount,
+    logout,
+  } = useAuth();
+  const {
+    multipleTimeEntries, setMultipleTimeEntries, shifts, saveShifts,
+    departments, saveDepartments,
+    customFields, saveCustomFields,
+  } = useAttendance();
 
   // Feature toggles
   const [autoFaceDetection, setAutoFaceDetection] = useState(true);
   const [voiceFeedback, setVoiceFeedback] = useState(true);
   const [sendReportsDaily, setSendReportsDaily] = useState(false);
-
-  // Shift list
-  const [shifts, setShifts] = useState<ShiftEntry[]>(DEFAULT_SHIFTS);
 
   // Modals
   const [manageShiftsVisible, setManageShiftsVisible] = useState(false);
@@ -98,10 +70,25 @@ export default function SettingsScreen() {
   const [editingShift, setEditingShift] = useState<ShiftEntry | null>(null);
 
   const [passwordModalVisible, setPasswordModalVisible] = useState(false);
+  const [hrManagerVisible, setHrManagerVisible] = useState(false);
+  const [addHrModalVisible, setAddHrModalVisible] = useState(false);
   const [syncModalVisible, setSyncModalVisible] = useState(false);
   const [aboutModalVisible, setAboutModalVisible] = useState(false);
-  const [newPasswordInput, setNewPasswordInput] = useState('');
-  const [isChangingPassword, setIsChangingPassword] = useState(false);
+
+  // Enrolment field management
+  const [deptModalVisible, setDeptModalVisible] = useState(false);
+  const [newDeptName, setNewDeptName] = useState('');
+  const [customFieldsModalVisible, setCustomFieldsModalVisible] = useState(false);
+  const [newFieldLabel, setNewFieldLabel] = useState('');
+  const [newFieldKey, setNewFieldKey] = useState('');
+  const [newFieldType, setNewFieldType] = useState<CustomField['inputType']>('text');
+  const [newFieldRequired, setNewFieldRequired] = useState(false);
+
+  // New HR Account form
+  const [newHrName, setNewHrName] = useState('');
+  const [newHrLoginId, setNewHrLoginId] = useState('');
+  const [newHrPassword, setNewHrPassword] = useState('');
+  const [newHrRole, setNewHrRole] = useState<'SUPER_ADMIN' | 'HR_MANAGER' | 'HR_STAFF'>('HR_MANAGER');
 
   // Shift form fields
   const [formName, setFormName] = useState('');
@@ -139,59 +126,99 @@ export default function SettingsScreen() {
   const openEditShift = (shift: ShiftEntry) => {
     setEditingShift(shift);
     setFormName(shift.name);
-    setFormStart(new Date(shift.startTime));
-    setFormEnd(new Date(shift.endTime));
-    setFormLateCutoff(new Date(shift.lateCutoff));
+    setFormStart(makeTime(shift.startHour, shift.startMin));
+    setFormEnd(makeTime(shift.endHour, shift.endMin));
+    setFormLateCutoff(makeTime(shift.lateCutoffHour, shift.lateCutoffMin));
     setShiftFormVisible(true);
   };
 
-  const saveShift = () => {
+  const saveShiftForm = () => {
     if (!formName.trim()) {
       Alert.alert('Validation', 'Please enter a shift name.');
       return;
     }
+    let updated: ShiftEntry[];
     if (editingShift) {
-      setShifts((prev) =>
-        prev.map((s) =>
-          s.id === editingShift.id
-            ? { ...s, name: formName.trim(), startTime: formStart, endTime: formEnd, lateCutoff: formLateCutoff }
-            : s
-        )
+      updated = shifts.map((s) =>
+        s.id === editingShift.id
+          ? {
+              ...s,
+              name: formName.trim(),
+              startHour: formStart.getHours(), startMin: formStart.getMinutes(),
+              endHour: formEnd.getHours(), endMin: formEnd.getMinutes(),
+              lateCutoffHour: formLateCutoff.getHours(), lateCutoffMin: formLateCutoff.getMinutes(),
+            }
+          : s
       );
     } else {
       const newShift: ShiftEntry = {
         id: Date.now().toString(),
         name: formName.trim(),
-        startTime: formStart,
-        endTime: formEnd,
-        lateCutoff: formLateCutoff,
+        startHour: formStart.getHours(), startMin: formStart.getMinutes(),
+        endHour: formEnd.getHours(), endMin: formEnd.getMinutes(),
+        lateCutoffHour: formLateCutoff.getHours(), lateCutoffMin: formLateCutoff.getMinutes(),
         isActive: false,
       };
-      setShifts((prev) => [...prev, newShift]);
+      updated = [...shifts, newShift];
     }
+    saveShifts(updated);
     setShiftFormVisible(false);
   };
 
   const deleteShift = (id: string) => {
-    Alert.alert('Delete Shift', 'Are you sure you want to delete this shift?', [
+    Alert.alert('Delete Shift', 'Delete this shift?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
-        onPress: () => {
-          setShifts((prev) => prev.filter((s) => s.id !== id));
-        },
+        onPress: () => saveShifts(shifts.filter((s) => s.id !== id)),
       },
     ]);
   };
 
   const setActiveShift = (id: string) => {
-    setShifts((prev) => prev.map((s) => ({ ...s, isActive: s.id === id })));
+    saveShifts(shifts.map((s) => ({ ...s, isActive: s.id === id })));
   };
 
-  // ---------- Other handlers ----------
-  const handleRateUs = () => {
-    Alert.alert('Rate Visagel', 'Thank you for rating Visagel on Google Play Store!', [{ text: 'OK' }]);
+  // ---------- HR Accounts handler ----------
+  const handleCreateHrAccount = async () => {
+    if (!newHrName.trim() || !newHrLoginId.trim() || !newHrPassword.trim()) {
+      Alert.alert('Incomplete Details', 'Please fill in HR Name, Login ID and Password.');
+      return;
+    }
+    const success = await addAdminAccount({
+      name: newHrName.trim(),
+      loginId: newHrLoginId.trim(),
+      password: newHrPassword.trim(),
+      role: newHrRole,
+    });
+    if (success) {
+      Alert.alert('Success', `Created HR account for ${newHrName} (${newHrLoginId})!`);
+      setNewHrName('');
+      setNewHrLoginId('');
+      setNewHrPassword('');
+      setAddHrModalVisible(false);
+    } else {
+      Alert.alert('Duplicate ID', 'An HR account with this Login ID already exists.');
+    }
+  };
+
+  const handleDeleteHrAccount = (id: string, name: string) => {
+    if (adminAccounts.length <= 1) {
+      Alert.alert('Action Denied', 'You cannot remove the primary admin account.');
+      return;
+    }
+    Alert.alert('Remove HR Access', `Are you sure you want to revoke credentials for ${name}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Revoke',
+        style: 'destructive',
+        onPress: async () => {
+          await removeAdminAccount(id);
+          Alert.alert('Removed', `Credentials for ${name} have been revoked.`);
+        },
+      },
+    ]);
   };
 
   const handleHelp = () => {
@@ -203,6 +230,53 @@ export default function SettingsScreen() {
         { text: 'Email Support', onPress: () => Linking.openURL('mailto:support@branzept.com') },
       ]
     );
+  };
+
+  // ---------- Department CRUD ----------
+  const handleAddDepartment = () => {
+    const name = newDeptName.trim();
+    if (!name) { Alert.alert('Validation', 'Please enter a department name.'); return; }
+    if (departments.some((d) => d.toLowerCase() === name.toLowerCase())) {
+      Alert.alert('Duplicate', `"${name}" already exists.`); return;
+    }
+    saveDepartments([...departments, name]);
+    setNewDeptName('');
+  };
+
+  const handleRemoveDepartment = (dept: string) => {
+    Alert.alert('Remove Department', `Remove "${dept}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => saveDepartments(departments.filter((d) => d !== dept)) },
+    ]);
+  };
+
+  // ---------- Custom Field CRUD ----------
+  const handleAddCustomField = () => {
+    const label = newFieldLabel.trim();
+    const key = newFieldKey.trim() || label.toLowerCase().replace(/\s+/g, '_');
+    if (!label) { Alert.alert('Validation', 'Please enter a field label.'); return; }
+    if (customFields.some((f) => f.key === key)) {
+      Alert.alert('Duplicate', `A field with key "${key}" already exists.`); return;
+    }
+    const newField: CustomField = {
+      id: Date.now().toString(),
+      label,
+      key,
+      inputType: newFieldType,
+      isRequired: newFieldRequired,
+    };
+    saveCustomFields([...customFields, newField]);
+    setNewFieldLabel('');
+    setNewFieldKey('');
+    setNewFieldType('text');
+    setNewFieldRequired(false);
+  };
+
+  const handleRemoveCustomField = (id: string, label: string) => {
+    Alert.alert('Remove Field', `Remove the "${label}" field from enrollment forms?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => saveCustomFields(customFields.filter((f) => f.id !== id)) },
+    ]);
   };
 
   const activeShift = shifts.find((s) => s.isActive);
@@ -277,7 +351,7 @@ export default function SettingsScreen() {
             <View style={styles.menuInfo}>
               <Text style={styles.menuTitle}>Work Shifts</Text>
               <Text style={styles.menuDescription}>
-                {activeShift ? `Active: ${activeShift.name} (${formatTime(activeShift.startTime)} - ${formatTime(activeShift.endTime)})` : 'Configure shifts & timings'}
+                {activeShift ? `Active: ${activeShift.name} (${formatTime(activeShift.startHour, activeShift.startMin)} - ${formatTime(activeShift.endHour, activeShift.endMin)})` : 'Configure shifts & timings'}
               </Text>
             </View>
             <View style={styles.shiftCountPill}>
@@ -381,19 +455,66 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* SECTION 3: SECURITY & ADMIN */}
+        {/* SECTION 2.5: ENROLMENT FIELDS */}
         <View style={styles.sectionHeaderWrap}>
-          <Text style={styles.sectionHeadingText}>SECURITY & SYSTEM</Text>
+          <Text style={styles.sectionHeadingText}>ENROLMENT FIELDS</Text>
         </View>
         <View style={styles.cardGroup}>
-          {/* Admin Password */}
-          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={() => setPasswordModalVisible(true)}>
-            <View style={[styles.iconBox, { backgroundColor: '#F8FAFC' }]}>
-              <MaterialCommunityIcons name="shield-key-outline" size={20} color="#334155" />
+          {/* Departments */}
+          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={() => setDeptModalVisible(true)}>
+            <View style={[styles.iconBox, { backgroundColor: '#F0FDF4' }]}>
+              <MaterialCommunityIcons name="office-building-outline" size={20} color="#059669" />
             </View>
             <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>Admin Password</Text>
-              <Text style={styles.menuDescription}>Change authentication credentials</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={styles.menuTitle}>Departments</Text>
+                <View style={styles.countBadge}>
+                  <Text style={styles.countBadgeText}>{departments.length}</Text>
+                </View>
+              </View>
+              <Text style={styles.menuDescription}>Add or remove departments available in enrollment</Text>
+            </View>
+            <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
+          </TouchableOpacity>
+
+          <View style={styles.cardDivider} />
+
+          {/* Custom Fields */}
+          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={() => setCustomFieldsModalVisible(true)}>
+            <View style={[styles.iconBox, { backgroundColor: '#EFF6FF' }]}>
+              <MaterialCommunityIcons name="form-textbox" size={20} color="#2563EB" />
+            </View>
+            <View style={styles.menuInfo}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={styles.menuTitle}>Custom Enrolment Fields</Text>
+                <View style={styles.countBadge}>
+                  <Text style={styles.countBadgeText}>{customFields.length}</Text>
+                </View>
+              </View>
+              <Text style={styles.menuDescription}>Add extra fields to the employee enrollment form</Text>
+            </View>
+            <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
+          </TouchableOpacity>
+        </View>
+
+        {/* SECTION 3: SECURITY & HR ACCESS */}
+        <View style={styles.sectionHeaderWrap}>
+          <Text style={styles.sectionHeadingText}>SECURITY & HR ACCESS</Text>
+        </View>
+        <View style={styles.cardGroup}>
+          {/* Multiple HR IDs & Passwords Management */}
+          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={() => setHrManagerVisible(true)}>
+            <View style={[styles.iconBox, { backgroundColor: '#FFF7ED' }]}>
+              <MaterialCommunityIcons name="account-key-outline" size={20} color="#FF6900" />
+            </View>
+            <View style={styles.menuInfo}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={styles.menuTitle}>HR Admin Accounts</Text>
+                <View style={styles.countBadge}>
+                  <Text style={styles.countBadgeText}>{adminAccounts.length}</Text>
+                </View>
+              </View>
+              <Text style={styles.menuDescription}>Create & manage multiple HR logins & passwords</Text>
             </View>
             <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
           </TouchableOpacity>
@@ -421,21 +542,7 @@ export default function SettingsScreen() {
             </View>
             <View style={styles.menuInfo}>
               <Text style={styles.menuTitle}>About Visagel</Text>
-              <Text style={styles.menuDescription}>Version, licenses and company info</Text>
-            </View>
-            <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
-          </TouchableOpacity>
-
-          <View style={styles.cardDivider} />
-
-          {/* Rate Us */}
-          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={handleRateUs}>
-            <View style={[styles.iconBox, { backgroundColor: '#FEF3C7' }]}>
-              <MaterialCommunityIcons name="star-outline" size={20} color="#F59E0B" />
-            </View>
-            <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>Rate App</Text>
-              <Text style={styles.menuDescription}>Support us with a 5-star review</Text>
+              <Text style={styles.menuDescription}>Version, biometric engine and company info</Text>
             </View>
             <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
           </TouchableOpacity>
@@ -484,6 +591,182 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
 
+      {/* ===== MANAGE DEPARTMENTS MODAL ===== */}
+      <Modal
+        visible={deptModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setDeptModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalContentSheet, { maxHeight: '80%' }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Departments</Text>
+                <Text style={styles.modalSubtitle}>{departments.length} department{departments.length !== 1 ? 's' : ''} configured</Text>
+              </View>
+              <TouchableOpacity onPress={() => setDeptModalVisible(false)} style={styles.modalCloseBtn}>
+                <FontAwesome name="close" size={18} color="#0A192F" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Add new dept */}
+            <View style={styles.addFieldRow}>
+              <TextInput
+                style={styles.addFieldInput}
+                placeholder="New department name…"
+                placeholderTextColor="#9CA3AF"
+                value={newDeptName}
+                onChangeText={setNewDeptName}
+                autoCapitalize="words"
+                returnKeyType="done"
+                onSubmitEditing={handleAddDepartment}
+              />
+              <TouchableOpacity style={styles.addFieldBtn} onPress={handleAddDepartment} activeOpacity={0.8}>
+                <MaterialCommunityIcons name="plus" size={18} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {departments.length === 0 ? (
+                <View style={styles.emptyFieldsBox}>
+                  <MaterialCommunityIcons name="office-building-outline" size={32} color="#CBD5E1" />
+                  <Text style={styles.emptyFieldsText}>No departments added yet</Text>
+                </View>
+              ) : (
+                departments.map((dept) => (
+                  <View key={dept} style={styles.fieldListRow}>
+                    <View style={[styles.fieldTypeTag, { backgroundColor: '#F0FDF4', borderColor: '#A7F3D0' }]}>
+                      <MaterialCommunityIcons name="office-building-outline" size={14} color="#059669" />
+                    </View>
+                    <Text style={styles.fieldListLabel}>{dept}</Text>
+                    <TouchableOpacity
+                      style={styles.fieldDeleteBtn}
+                      onPress={() => handleRemoveDepartment(dept)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <MaterialCommunityIcons name="trash-can-outline" size={16} color="#EF4444" />
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ===== MANAGE CUSTOM FIELDS MODAL ===== */}
+      <Modal
+        visible={customFieldsModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setCustomFieldsModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalContentSheet, { maxHeight: '90%' }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Custom Fields</Text>
+                <Text style={styles.modalSubtitle}>{customFields.length} field{customFields.length !== 1 ? 's' : ''} configured</Text>
+              </View>
+              <TouchableOpacity onPress={() => setCustomFieldsModalVisible(false)} style={styles.modalCloseBtn}>
+                <FontAwesome name="close" size={18} color="#0A192F" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Add new field form */}
+            <View style={styles.newFieldFormCard}>
+              <Text style={styles.newFieldFormTitle}>Add New Field</Text>
+
+              <Text style={styles.inputLabel}>Field Label *</Text>
+              <TextInput
+                style={styles.customFieldFormInput}
+                placeholder="e.g. Employee Badge No."
+                placeholderTextColor="#9CA3AF"
+                value={newFieldLabel}
+                onChangeText={(t) => {
+                  setNewFieldLabel(t);
+                  setNewFieldKey(t.trim().toLowerCase().replace(/\s+/g, '_'));
+                }}
+                autoCapitalize="words"
+              />
+
+              <Text style={[styles.inputLabel, { marginTop: 10 }]}>Field Key (auto-generated)</Text>
+              <TextInput
+                style={[styles.customFieldFormInput, { color: '#64748B', backgroundColor: '#F8FAFC' }]}
+                value={newFieldKey}
+                onChangeText={setNewFieldKey}
+                placeholder="e.g. badge_no"
+                placeholderTextColor="#9CA3AF"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+
+              <Text style={[styles.inputLabel, { marginTop: 10 }]}>Input Type</Text>
+              <View style={styles.typeRow}>
+                {(['text', 'phone', 'number', 'email'] as const).map((t) => (
+                  <TouchableOpacity
+                    key={t}
+                    style={[styles.typeChip, newFieldType === t && styles.typeChipActive]}
+                    onPress={() => setNewFieldType(t)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[styles.typeChipText, newFieldType === t && styles.typeChipTextActive]}>{t}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <View style={styles.requiredRow}>
+                <Text style={styles.inputLabel}>Required field?</Text>
+                <Switch
+                  value={newFieldRequired}
+                  onValueChange={setNewFieldRequired}
+                  trackColor={{ false: '#E2E8F0', true: THEME_COLOR }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+
+              <TouchableOpacity style={styles.addCustomFieldBtn} onPress={handleAddCustomField} activeOpacity={0.85}>
+                <MaterialCommunityIcons name="plus-circle-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.addCustomFieldBtnText}>Add Field</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: 12 }}>
+              {customFields.length === 0 ? (
+                <View style={styles.emptyFieldsBox}>
+                  <MaterialCommunityIcons name="form-textbox" size={32} color="#CBD5E1" />
+                  <Text style={styles.emptyFieldsText}>No custom fields yet</Text>
+                </View>
+              ) : (
+                customFields.map((field) => {
+                  const typeColor: Record<string, string> = { text: '#2563EB', phone: '#059669', number: '#D97706', email: '#7C3AED' };
+                  const typeBg: Record<string, string> = { text: '#EFF6FF', phone: '#ECFDF5', number: '#FFFBEB', email: '#F5F3FF' };
+                  return (
+                    <View key={field.id} style={styles.fieldListRow}>
+                      <View style={[styles.fieldTypeTag, { backgroundColor: typeBg[field.inputType] || '#F1F5F9', borderColor: typeColor[field.inputType] || '#94A3B8' }]}>
+                        <Text style={[styles.fieldTypeTagText, { color: typeColor[field.inputType] || '#475569' }]}>{field.inputType}</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.fieldListLabel}>{field.label}</Text>
+                        <Text style={styles.fieldListKey}>{field.key}{field.isRequired ? ' • Required' : ''}</Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.fieldDeleteBtn}
+                        onPress={() => handleRemoveCustomField(field.id, field.label)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <MaterialCommunityIcons name="trash-can-outline" size={16} color="#EF4444" />
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* ===== MANAGE SHIFTS MODAL ===== */}
       <Modal
         visible={manageShiftsVisible}
@@ -505,7 +788,7 @@ export default function SettingsScreen() {
 
             <ScrollView showsVerticalScrollIndicator={false}>
               {shifts.map((shift, index) => {
-                const night = isNightShift(shift.startTime, shift.endTime);
+                const night = isNightShift(shift.startHour, shift.endHour);
                 const accentColor = night ? NIGHT_COLOR : THEME_COLOR;
                 const accentBg = night ? NIGHT_COLOR_10 : THEME_COLOR_10_OPACITY;
                 return (
@@ -542,17 +825,17 @@ export default function SettingsScreen() {
                     <View style={[styles.shiftTimeRow, { backgroundColor: accentBg, borderRadius: 10, padding: 10, marginTop: 8 }]}>
                       <View style={styles.shiftTimeCol}>
                         <Text style={styles.shiftTimeLabel}>Start</Text>
-                        <Text style={[styles.shiftTimeValue, { color: accentColor }]}>{formatTime(shift.startTime)}</Text>
+                        <Text style={[styles.shiftTimeValue, { color: accentColor }]}>{formatTime(shift.startHour, shift.startMin)}</Text>
                       </View>
                       <MaterialCommunityIcons name="arrow-right" size={16} color="#94A3B8" />
                       <View style={styles.shiftTimeCol}>
                         <Text style={styles.shiftTimeLabel}>End {night ? '(+1 day)' : ''}</Text>
-                        <Text style={[styles.shiftTimeValue, { color: accentColor }]}>{formatTime(shift.endTime)}</Text>
+                        <Text style={[styles.shiftTimeValue, { color: accentColor }]}>{formatTime(shift.endHour, shift.endMin)}</Text>
                       </View>
                       <View style={styles.shiftTimeDividerV} />
                       <View style={styles.shiftTimeCol}>
                         <Text style={styles.shiftTimeLabel}>Late After</Text>
-                        <Text style={[styles.shiftTimeValue, { color: accentColor }]}>{formatTime(shift.lateCutoff)}</Text>
+                        <Text style={[styles.shiftTimeValue, { color: accentColor }]}>{formatTime(shift.lateCutoffHour, shift.lateCutoffMin)}</Text>
                       </View>
                     </View>
 
@@ -612,7 +895,7 @@ export default function SettingsScreen() {
               <View>
                 <Text style={styles.modalTitle}>{editingShift ? 'Edit Shift' : 'Add New Shift'}</Text>
                 <Text style={styles.modalSubtitle}>
-                  {isNightShift(formStart, formEnd)
+                  {isNightShift(formStart.getHours(), formEnd.getHours())
                     ? '🌙 Night shift detected (crosses midnight)'
                     : '☀️ Day shift'}
                 </Text>
@@ -633,7 +916,7 @@ export default function SettingsScreen() {
             />
 
             {/* Night shift info banner */}
-            {isNightShift(formStart, formEnd) && (
+            {isNightShift(formStart.getHours(), formEnd.getHours()) && (
               <View style={styles.nightInfoBanner}>
                 <MaterialCommunityIcons name="weather-night" size={16} color={NIGHT_COLOR} style={{ marginRight: 8 }} />
                 <Text style={styles.nightInfoText}>
@@ -659,7 +942,7 @@ export default function SettingsScreen() {
                   </View>
                 </View>
                 <View style={styles.shiftTimeBadge}>
-                  <Text style={styles.shiftTimeBadgeText}>{formatTime(formStart)}</Text>
+                  <Text style={styles.shiftTimeBadgeText}>{formatTime(formStart.getHours(), formStart.getMinutes())}</Text>
                   <FontAwesome name="pencil" size={11} color={THEME_COLOR} style={{ marginLeft: 6 }} />
                 </View>
               </TouchableOpacity>
@@ -673,19 +956,19 @@ export default function SettingsScreen() {
                 onPress={() => openTimePicker('Shift End Time', formEnd, setFormEnd)}
               >
                 <View style={styles.shiftLabelGroup}>
-                  <View style={[styles.miniIconCircle, { backgroundColor: isNightShift(formStart, formEnd) ? NIGHT_COLOR_10 : THEME_COLOR_10_OPACITY }]}>
-                    <FontAwesome name="hourglass-end" size={14} color={isNightShift(formStart, formEnd) ? NIGHT_COLOR : THEME_COLOR} />
+                  <View style={[styles.miniIconCircle, { backgroundColor: isNightShift(formStart.getHours(), formEnd.getHours()) ? NIGHT_COLOR_10 : THEME_COLOR_10_OPACITY }]}>
+                    <FontAwesome name="hourglass-end" size={14} color={isNightShift(formStart.getHours(), formEnd.getHours()) ? NIGHT_COLOR : THEME_COLOR} />
                   </View>
                   <View>
                     <Text style={styles.shiftTitle}>
-                      End Time {isNightShift(formStart, formEnd) ? '(next day)' : ''}
+                      End Time {isNightShift(formStart.getHours(), formEnd.getHours()) ? '(next day)' : ''}
                     </Text>
                     <Text style={styles.shiftSub}>When the shift ends</Text>
                   </View>
                 </View>
-                <View style={[styles.shiftTimeBadge, isNightShift(formStart, formEnd) && { backgroundColor: NIGHT_COLOR_10, borderColor: 'rgba(99, 102, 241, 0.25)' }]}>
-                  <Text style={[styles.shiftTimeBadgeText, isNightShift(formStart, formEnd) && { color: NIGHT_COLOR }]}>{formatTime(formEnd)}</Text>
-                  <FontAwesome name="pencil" size={11} color={isNightShift(formStart, formEnd) ? NIGHT_COLOR : THEME_COLOR} style={{ marginLeft: 6 }} />
+                <View style={[styles.shiftTimeBadge, isNightShift(formStart.getHours(), formEnd.getHours()) && { backgroundColor: NIGHT_COLOR_10, borderColor: 'rgba(99, 102, 241, 0.25)' }]}>
+                  <Text style={[styles.shiftTimeBadgeText, isNightShift(formStart.getHours(), formEnd.getHours()) && { color: NIGHT_COLOR }]}>{formatTime(formEnd.getHours(), formEnd.getMinutes())}</Text>
+                  <FontAwesome name="pencil" size={11} color={isNightShift(formStart.getHours(), formEnd.getHours()) ? NIGHT_COLOR : THEME_COLOR} style={{ marginLeft: 6 }} />
                 </View>
               </TouchableOpacity>
 
@@ -707,13 +990,13 @@ export default function SettingsScreen() {
                   </View>
                 </View>
                 <View style={styles.shiftTimeBadge}>
-                  <Text style={styles.shiftTimeBadgeText}>{formatTime(formLateCutoff)}</Text>
+                  <Text style={styles.shiftTimeBadgeText}>{formatTime(formLateCutoff.getHours(), formLateCutoff.getMinutes())}</Text>
                   <FontAwesome name="pencil" size={11} color={THEME_COLOR} style={{ marginLeft: 6 }} />
                 </View>
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity style={styles.doneModalBtn} onPress={saveShift} activeOpacity={0.85}>
+            <TouchableOpacity style={styles.doneModalBtn} onPress={saveShiftForm} activeOpacity={0.85}>
               <Text style={styles.doneModalBtnText}>{editingShift ? 'Save Changes' : 'Add Shift'}</Text>
             </TouchableOpacity>
           </View>
@@ -752,103 +1035,174 @@ export default function SettingsScreen() {
         </View>
       </Modal>
 
-      {/* ===== PASSWORD MODAL ===== */}
+      {/* ===== HR ACCOUNTS MANAGEMENT MODAL ===== */}
       <Modal
-        visible={passwordModalVisible}
+        visible={hrManagerVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setHrManagerVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.sheetContainer}>
+            {/* Header */}
+            <View style={styles.sheetHeader}>
+              <View>
+                <View style={styles.companyBadgeRow}>
+                  <FontAwesome name="shield" size={11} color={THEME_COLOR} style={{ marginRight: 4 }} />
+                  <Text style={styles.companyNameText}>SECURITY</Text>
+                </View>
+                <Text style={styles.sheetTitle}>HR Admin Accounts</Text>
+              </View>
+              <TouchableOpacity style={styles.sheetCloseBtn} onPress={() => setHrManagerVisible(false)}>
+                <FontAwesome name="close" size={16} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={{ padding: 18, paddingBottom: 28 }} showsVerticalScrollIndicator={false}>
+              <View style={styles.hrHeaderInfo}>
+                <MaterialCommunityIcons name="shield-account-outline" size={20} color="#FF6900" style={{ marginRight: 8 }} />
+                <Text style={styles.hrHeaderInfoText}>
+                  Provide unique HR ID & Passwords to different HR personnel for authorized administrative access.
+                </Text>
+              </View>
+
+              {/* Accounts list */}
+              {adminAccounts.map((acc) => (
+                <View key={acc.id} style={styles.hrAccountCard}>
+                  <View style={styles.hrAvatarCircle}>
+                    <FontAwesome name="user-secret" size={18} color="#FF6900" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <Text style={styles.hrAccountName}>{acc.name}</Text>
+                      <View style={[styles.roleBadge, acc.role === 'SUPER_ADMIN' ? styles.roleBadgeSuper : styles.roleBadgeManager]}>
+                        <Text style={[styles.roleBadgeText, acc.role === 'SUPER_ADMIN' ? { color: '#0A192F' } : { color: '#0284C7' }]}>
+                          {acc.role.replace('_', ' ')}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.hrCredsRow}>
+                      <Text style={styles.hrCredsLabel}>Login ID: </Text>
+                      <Text style={styles.hrCredsValue}>{acc.loginId}</Text>
+                      <Text style={[styles.hrCredsLabel, { marginLeft: 12 }]}>Password: </Text>
+                      <Text style={styles.hrCredsValue}>{acc.password}</Text>
+                    </View>
+                  </View>
+                  {acc.role !== 'SUPER_ADMIN' && (
+                    <TouchableOpacity
+                      style={styles.hrDeleteBtn}
+                      onPress={() => handleDeleteHrAccount(acc.id, acc.name)}
+                      activeOpacity={0.7}
+                    >
+                      <FontAwesome name="trash-o" size={15} color="#EF4444" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+
+              <TouchableOpacity
+                style={styles.addHrActionBtn}
+                onPress={() => setAddHrModalVisible(true)}
+                activeOpacity={0.8}
+              >
+                <FontAwesome name="plus" size={13} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.addHrActionBtnText}>Add New HR Account</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ===== ADD NEW HR MODAL ===== */}
+      <Modal
+        visible={addHrModalVisible}
         animationType="fade"
         transparent={true}
-        onRequestClose={() => {
-          setPasswordModalVisible(false);
-          setIsChangingPassword(false);
-          setNewPasswordInput('');
-        }}
+        onRequestClose={() => setAddHrModalVisible(false)}
       >
         <View style={[styles.modalBackdrop, { justifyContent: 'center' }]}>
           <View style={styles.alertCard}>
             <View style={styles.planBadge}>
-              <Text style={styles.planBadgeText}>SECURITY</Text>
+              <Text style={styles.planBadgeText}>NEW CREDENTIALS</Text>
             </View>
-            <Text style={styles.planTitle}>Admin Password</Text>
-            <Text style={styles.planSubtitle}>
-              {isChangingPassword
-                ? 'Enter new password for Admin access'
-                : 'Current admin password is active.'}
-            </Text>
+            <Text style={styles.planTitle}>Create HR Account</Text>
+            <Text style={styles.planSubtitle}>Create new login credentials for HR staff</Text>
 
-            {!isChangingPassword ? (
-              <>
-                <View style={styles.pinDisplayBox}>
-                  <Text style={styles.pinDisplayText}>•••••••• ({adminPassword})</Text>
-                </View>
-                <TouchableOpacity
-                  style={[styles.closeAlertBtn, { backgroundColor: '#F1F5F9', marginBottom: 10 }]}
-                  onPress={() => {
-                    setNewPasswordInput('');
-                    setIsChangingPassword(true);
-                  }}
-                >
-                  <Text style={[styles.closeAlertBtnText, { color: '#0A192F' }]}>Change Password</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.closeAlertBtn}
-                  onPress={() => {
-                    setPasswordModalVisible(false);
-                    setIsChangingPassword(false);
-                    setNewPasswordInput('');
-                  }}
-                >
-                  <Text style={styles.closeAlertBtnText}>Done</Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <View style={{ width: '100%', alignItems: 'center' }}>
+            <View style={{ width: '100%', gap: 10, marginVertical: 14 }}>
+              <View>
+                <Text style={styles.inputLabel}>HR Officer / Manager Name</Text>
                 <TextInput
-                  style={[
-                    styles.formInput,
-                    {
-                      textAlign: 'center',
-                      fontSize: 16,
-                      fontWeight: '700',
-                      width: '100%',
-                      marginVertical: 12,
-                    },
-                  ]}
-                  value={newPasswordInput}
-                  onChangeText={setNewPasswordInput}
-                  placeholder="Enter new password"
+                  style={styles.formInput}
+                  value={newHrName}
+                  onChangeText={setNewHrName}
+                  placeholder="e.g. Priya Sharma"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+
+              <View>
+                <Text style={styles.inputLabel}>HR Login ID</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={newHrLoginId}
+                  onChangeText={setNewHrLoginId}
+                  placeholder="e.g. hr_priya"
                   placeholderTextColor="#94A3B8"
                   autoCapitalize="none"
                   autoCorrect={false}
-                  autoFocus
                 />
-                <View style={{ flexDirection: 'row', gap: 10, width: '100%', marginTop: 8 }}>
+              </View>
+
+              <View>
+                <Text style={styles.inputLabel}>Password</Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={newHrPassword}
+                  onChangeText={setNewHrPassword}
+                  placeholder="Enter secure password"
+                  placeholderTextColor="#94A3B8"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              <View>
+                <Text style={styles.inputLabel}>Role Designation</Text>
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
                   <TouchableOpacity
-                    style={[styles.closeAlertBtn, { flex: 1, backgroundColor: '#F1F5F9' }]}
-                    onPress={() => {
-                      setIsChangingPassword(false);
-                      setNewPasswordInput('');
-                    }}
+                    style={[styles.roleSelectPill, newHrRole === 'HR_MANAGER' && styles.roleSelectPillActive]}
+                    onPress={() => setNewHrRole('HR_MANAGER')}
                   >
-                    <Text style={[styles.closeAlertBtnText, { color: '#64748B' }]}>Cancel</Text>
+                    <Text style={[styles.roleSelectPillText, newHrRole === 'HR_MANAGER' && styles.roleSelectPillTextActive]}>
+                      HR Manager
+                    </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.closeAlertBtn, { flex: 1, backgroundColor: THEME_COLOR }]}
-                    onPress={async () => {
-                      if (!newPasswordInput.trim()) {
-                        Alert.alert('Invalid', 'Password cannot be empty.');
-                        return;
-                      }
-                      await updatePassword(newPasswordInput);
-                      setIsChangingPassword(false);
-                      setNewPasswordInput('');
-                      Alert.alert('Saved', 'New admin password saved.');
-                    }}
+                    style={[styles.roleSelectPill, newHrRole === 'HR_STAFF' && styles.roleSelectPillActive]}
+                    onPress={() => setNewHrRole('HR_STAFF')}
                   >
-                    <Text style={styles.closeAlertBtnText}>Save</Text>
+                    <Text style={[styles.roleSelectPillText, newHrRole === 'HR_STAFF' && styles.roleSelectPillTextActive]}>
+                      HR Staff
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
-            )}
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 10, width: '100%', marginTop: 8 }}>
+              <TouchableOpacity
+                style={[styles.closeAlertBtn, { flex: 1, backgroundColor: '#F1F5F9' }]}
+                onPress={() => setAddHrModalVisible(false)}
+              >
+                <Text style={[styles.closeAlertBtnText, { color: '#64748B' }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.closeAlertBtn, { flex: 1, backgroundColor: THEME_COLOR }]}
+                onPress={handleCreateHrAccount}
+              >
+                <Text style={styles.closeAlertBtnText}>Create Account</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1528,5 +1882,341 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+
+  // HR Accounts Manager Styles
+  hrHeaderInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+  },
+  hrHeaderInfoText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#9A3412',
+    lineHeight: 17,
+    fontWeight: '500',
+  },
+  hrAccountCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1.5,
+    borderColor: '#F1F5F9',
+    gap: 12,
+  },
+  hrAvatarCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFF7ED',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hrAccountName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  roleBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  roleBadgeSuper: {
+    backgroundColor: '#FEF3C7',
+  },
+  roleBadgeManager: {
+    backgroundColor: '#E0F2FE',
+  },
+  roleBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  hrCredsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  hrCredsLabel: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  hrCredsValue: {
+    fontSize: 12,
+    color: '#334155',
+    fontWeight: '700',
+  },
+  hrDeleteBtn: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#FEF2F2',
+  },
+  addHrActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: THEME_COLOR,
+    borderRadius: 12,
+    paddingVertical: 12,
+    marginTop: 10,
+    shadowColor: THEME_COLOR,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  addHrActionBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  roleSelectPill: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roleSelectPillActive: {
+    borderColor: THEME_COLOR,
+    backgroundColor: '#FFF7ED',
+  },
+  roleSelectPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  roleSelectPillTextActive: {
+    color: THEME_COLOR,
+  },
+
+  // Missing Modal & Header Styles
+  sheetContainer: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '85%',
+    width: '100%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  sheetTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0A192F',
+  },
+  sheetCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countBadge: {
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginLeft: 8,
+  },
+  countBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: THEME_COLOR,
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+    marginBottom: 4,
+  },
+  // ── Enrolment Field Management ──────────────────────────────────────────────
+  addFieldRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 14,
+  },
+  addFieldInput: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#0F172A',
+    backgroundColor: '#FFFFFF',
+  },
+  addFieldBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: THEME_COLOR,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: THEME_COLOR,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  emptyFieldsBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 28,
+    gap: 8,
+  },
+  emptyFieldsText: {
+    fontSize: 13,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  fieldListRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    gap: 10,
+  },
+  fieldTypeTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 44,
+  },
+  fieldTypeTagText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  fieldListLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  fieldListKey: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  fieldDeleteBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  newFieldFormCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 4,
+  },
+  newFieldFormTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 12,
+  },
+  customFieldFormInput: {
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 13,
+    color: '#0F172A',
+    backgroundColor: '#FFFFFF',
+  },
+  typeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 2,
+  },
+  typeChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+  },
+  typeChipActive: {
+    backgroundColor: THEME_COLOR,
+    borderColor: THEME_COLOR,
+  },
+  typeChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  typeChipTextActive: {
+    color: '#FFFFFF',
+  },
+  requiredRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  addCustomFieldBtn: {
+    flexDirection: 'row',
+    backgroundColor: THEME_COLOR,
+    paddingVertical: 11,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 14,
+    shadowColor: THEME_COLOR,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  addCustomFieldBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

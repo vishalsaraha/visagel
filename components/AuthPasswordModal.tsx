@@ -9,12 +9,13 @@ import {
   Vibration,
 } from 'react-native';
 import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
+import { AdminAccount } from '@/context/AuthContext';
 
 interface AuthPasswordModalProps {
   visible: boolean;
   onClose: () => void;
   onSuccess: () => void;
-  verifyPassword: (password: string) => boolean;
+  verifyPassword: (password: string, loginId?: string) => { success: boolean; user?: AdminAccount };
   title?: string;
   subtitle?: string;
 }
@@ -26,15 +27,17 @@ export default function AuthPasswordModal({
   onClose,
   onSuccess,
   verifyPassword,
-  title = 'HR Admin Login',
-  subtitle = 'Enter admin password to continue',
+  title = 'HR Login',
+  subtitle = 'Enter credentials to manage system',
 }: AuthPasswordModalProps) {
+  const [loginId, setLoginId] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
   useEffect(() => {
     if (visible) {
+      setLoginId('');
       setPassword('');
       setErrorMessage('');
       setShowPassword(false);
@@ -47,13 +50,15 @@ export default function AuthPasswordModal({
       return;
     }
 
-    if (verifyPassword(password)) {
+    const res = verifyPassword(password, loginId.trim() ? loginId : undefined);
+    if (res.success) {
       setPassword('');
+      setLoginId('');
       setErrorMessage('');
       onSuccess();
     } else {
       Vibration.vibrate(100);
-      setErrorMessage('Incorrect password');
+      setErrorMessage('Incorrect ID or Password');
       setPassword('');
     }
   };
@@ -79,19 +84,38 @@ export default function AuthPasswordModal({
 
           {/* Security Badge Icon */}
           <View style={styles.iconCircle}>
-            <MaterialCommunityIcons name="shield-lock-outline" size={30} color={THEME_COLOR} />
+            <MaterialCommunityIcons name="shield-lock-outline" size={28} color={THEME_COLOR} />
           </View>
 
           {/* Titles */}
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.subtitle}>{subtitle}</Text>
 
-          {/* Password Input Box */}
-          <View style={[styles.inputWrapper, errorMessage ? styles.inputWrapperError : null]}>
-            <MaterialCommunityIcons name="lock-outline" size={20} color="#94A3B8" style={{ marginRight: 10 }} />
+          {/* HR Login ID Input Box */}
+          <View style={styles.inputWrapper}>
+            <MaterialCommunityIcons name="account-tie-outline" size={18} color="#94A3B8" style={{ marginRight: 8 }} />
             <TextInput
               style={styles.input}
-              placeholder="Enter password"
+              placeholder="Admin ID (optional)"
+              placeholderTextColor="#94A3B8"
+              value={loginId}
+              onChangeText={(text) => {
+                setLoginId(text);
+                setErrorMessage('');
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="next"
+              autoFocus={true}
+            />
+          </View>
+
+          {/* Password Input Box */}
+          <View style={[styles.inputWrapper, { marginTop: 10 }, errorMessage ? styles.inputWrapperError : null]}>
+            <MaterialCommunityIcons name="lock-outline" size={18} color="#94A3B8" style={{ marginRight: 8 }} />
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
               placeholderTextColor="#94A3B8"
               value={password}
               onChangeText={(text) => {
@@ -101,7 +125,6 @@ export default function AuthPasswordModal({
               secureTextEntry={!showPassword}
               autoCapitalize="none"
               autoCorrect={false}
-              autoFocus={true}
               onSubmitEditing={handleLogin}
               returnKeyType="done"
             />
@@ -111,7 +134,7 @@ export default function AuthPasswordModal({
             >
               <MaterialCommunityIcons
                 name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                size={20}
+                size={18}
                 color="#64748B"
               />
             </TouchableOpacity>
@@ -122,7 +145,7 @@ export default function AuthPasswordModal({
             {errorMessage ? (
               <Text style={styles.errorText}>{errorMessage}</Text>
             ) : (
-              <Text style={styles.hintText}>Default: admin</Text>
+              <Text style={styles.hintText}>Default: admin / admin</Text>
             )}
           </View>
 

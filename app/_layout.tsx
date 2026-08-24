@@ -48,47 +48,48 @@ function SplashOverlay({ onFinish }: { onFinish: () => void }) {
 
   return (
     <Animated.View style={[styles.splashContainer, { opacity: containerOpacity }]}>
-      {/* Background decorative circles */}
+      {/* Background decorative ambient glow */}
       <View style={styles.bgCircle1} />
       <View style={styles.bgCircle2} />
       <View style={styles.bgCircle3} />
 
-      {/* Glowing ring around logo */}
-      <Animated.View style={[styles.logoGlowRing, { opacity: logoOpacity, transform: [{ scale: logoScale }] }]}>
-        <Animated.View style={[styles.logoInnerRing, { opacity: logoOpacity }]}>
-          <Image
-            source={require("../assets/images/visagel.png")}
-            style={styles.splashLogo}
-            resizeMode="cover"
-          />
+      {/* Main Content Card / Center Stack */}
+      <View style={styles.splashContentCenter}>
+        {/* Glowing ring around logo */}
+        <Animated.View style={[styles.logoGlowRing, { opacity: logoOpacity, transform: [{ scale: logoScale }] }]}>
+          <View style={styles.logoInnerRing}>
+            <Image
+              source={require("../assets/images/visagel.png")}
+              style={styles.splashLogo}
+              resizeMode="cover"
+            />
+          </View>
         </Animated.View>
+
+        {/* App name */}
+        <Animated.View style={[styles.appNameRow, { opacity: textOpacity }]}>
+          <Text style={styles.splashAppName}>Visagel</Text>
+          <Animated.View style={[styles.liveDot, { opacity: dotAnim }]} />
+        </Animated.View>
+
+        {/* Subtitle / Tagline */}
+        <Animated.Text style={[styles.splashSubtitle, { opacity: textOpacity }]}>
+          Smart Facial Attendance System
+        </Animated.Text>
+
+        {/* Elegant Accent Line */}
+        <Animated.View style={[styles.splashDivider, { opacity: tagOpacity }]} />
+      </View>
+
+      {/* Footer Branding & Version */}
+      <Animated.View style={[styles.splashFooter, { opacity: tagOpacity }]}>
+        <View style={styles.poweredByRow}>
+          <MaterialCommunityIcons name="shield-check-outline" size={14} color="#FF6900" style={{ marginRight: 5 }} />
+          <Text style={styles.poweredByText}>Powered by </Text>
+          <Text style={styles.poweredByBrand}>Branzept</Text>
+        </View>
+        <Text style={styles.splashVersion}>Version 1.0.0</Text>
       </Animated.View>
-
-      {/* App name */}
-      <Animated.View style={[styles.appNameRow, { opacity: textOpacity }]}>
-        <Text style={styles.splashAppName}>Visagel</Text>
-        <Animated.View style={[styles.liveDot, { opacity: dotAnim }]} />
-      </Animated.View>
-
-      {/* Subtitle */}
-      <Animated.Text style={[styles.splashSubtitle, { opacity: textOpacity }]}>
-        Smart Facial Recognition
-      </Animated.Text>
-
-      {/* Divider */}
-      <Animated.View style={[styles.splashDivider, { opacity: tagOpacity }]} />
-
-      {/* Powered by */}
-      <Animated.View style={[styles.poweredByRow, { opacity: tagOpacity }]}>
-        <MaterialCommunityIcons name="lightning-bolt" size={12} color="#FF6900" style={{ marginRight: 4 }} />
-        <Text style={styles.poweredByText}>Powered by </Text>
-        <Text style={styles.poweredByBrand}>Branzept</Text>
-      </Animated.View>
-
-      {/* Version */}
-      <Animated.Text style={[styles.splashVersion, { opacity: tagOpacity }]}>
-        v1.0.0
-      </Animated.Text>
     </Animated.View>
   );
 }
@@ -173,83 +174,90 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     zIndex: 9999,
   },
-  // Decorative bg circles
+  // Decorative bg circles / ambient light
   bgCircle1: {
     position: "absolute",
-    width: 420,
-    height: 420,
-    borderRadius: 210,
-    backgroundColor: "rgba(255, 105, 0, 0.04)",
-    top: -80,
-    right: -100,
+    width: 440,
+    height: 440,
+    borderRadius: 220,
+    backgroundColor: "rgba(255, 105, 0, 0.05)",
+    top: -90,
+    right: -110,
   },
   bgCircle2: {
     position: "absolute",
-    width: 300,
-    height: 300,
-    borderRadius: 150,
-    backgroundColor: "rgba(99, 102, 241, 0.05)",
-    bottom: 80,
-    left: -80,
+    width: 320,
+    height: 320,
+    borderRadius: 160,
+    backgroundColor: "rgba(14, 165, 233, 0.05)",
+    bottom: -60,
+    left: -70,
   },
   bgCircle3: {
     position: "absolute",
-    width: 160,
-    height: 160,
-    borderRadius: 80,
+    width: 200,
+    height: 200,
+    borderRadius: 100,
     borderWidth: 1,
-    borderColor: "rgba(255, 105, 0, 0.12)",
-    top: "30%",
+    borderColor: "rgba(255, 105, 0, 0.1)",
+  },
+  splashContentCenter: {
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    paddingHorizontal: 24,
   },
   // Logo glow ring
   logoGlowRing: {
     width: 140,
     height: 140,
     borderRadius: 70,
-    backgroundColor: "rgba(255, 105, 0, 0.08)",
-    borderWidth: 1.5,
-    borderColor: "rgba(255, 105, 0, 0.3)",
+    backgroundColor: "rgba(255, 105, 0, 0.12)",
+    borderWidth: 2,
+    borderColor: "rgba(255, 105, 0, 0.4)",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 28,
+    marginBottom: 24,
     shadowColor: "#FF6900",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 24,
-    elevation: 10,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.45,
+    shadowRadius: 20,
+    elevation: 8,
   },
   logoInnerRing: {
-    width: 112,
-    height: 112,
-    borderRadius: 56,
-    backgroundColor: "#0D1F3C",
-    borderWidth: 2,
-    borderColor: "rgba(255, 105, 0, 0.35)",
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: "#FF6900",
+    borderWidth: 3,
+    borderColor: "#FFFFFF",
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
   },
   splashLogo: {
-    width: 112,
-    height: 112,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
   },
   // App name row
   appNameRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    justifyContent: "center",
     marginBottom: 6,
+    gap: 8,
   },
   splashAppName: {
-    fontSize: 38,
+    fontSize: 36,
     fontWeight: "900",
     color: "#FFFFFF",
-    letterSpacing: 1,
+    letterSpacing: 1.2,
   },
   liveDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
     backgroundColor: "#FF6900",
     marginTop: 2,
     shadowColor: "#FF6900",
@@ -259,41 +267,50 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   splashSubtitle: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: "#64748B",
-    letterSpacing: 1.5,
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#94A3B8",
+    letterSpacing: 1.8,
     textTransform: "uppercase",
-    marginBottom: 32,
+    marginBottom: 20,
+    textAlign: "center",
   },
   splashDivider: {
-    width: 48,
-    height: 2,
+    width: 44,
+    height: 3,
     backgroundColor: "#FF6900",
-    borderRadius: 1,
-    marginBottom: 16,
-    opacity: 0.6,
+    borderRadius: 2,
+    opacity: 0.8,
+  },
+  // Footer
+  splashFooter: {
+    position: "absolute",
+    bottom: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
   },
   poweredByRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
   },
   poweredByText: {
     fontSize: 12,
-    color: "#475569",
+    color: "#64748B",
     fontWeight: "500",
   },
   poweredByBrand: {
     fontSize: 12,
     color: "#FF6900",
     fontWeight: "800",
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
   },
   splashVersion: {
-    fontSize: 10,
-    color: "#334155",
+    fontSize: 11,
+    color: "#475569",
     fontWeight: "600",
-    marginTop: 6,
     letterSpacing: 0.5,
   },
 });

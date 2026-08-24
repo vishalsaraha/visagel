@@ -1,27 +1,54 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
 
+export interface AdminAccount {
+  id: string;
+  name: string;
+  loginId: string; // e.g. "hr_admin", "admin", "hr_manager"
+  password: string;
+  role: 'SUPER_ADMIN' | 'HR_MANAGER' | 'HR_STAFF';
+  createdAt: string;
+}
+
 interface AuthContextType {
-  adminPassword: string;
+  adminPassword: string; // compatibility default
   isAuthenticated: boolean;
-  verifyPassword: (password: string) => boolean;
+  currentUser: AdminAccount | null;
+  adminAccounts: AdminAccount[];
+  verifyPassword: (password: string, loginId?: string) => { success: boolean; user?: AdminAccount };
   updatePassword: (newPassword: string) => Promise<boolean>;
+  addAdminAccount: (account: Omit<AdminAccount, 'id' | 'createdAt'>) => Promise<boolean>;
+  removeAdminAccount: (id: string) => Promise<boolean>;
+  updateAdminAccount: (id: string, updates: Partial<AdminAccount>) => Promise<boolean>;
   logout: () => void;
 }
 
 const PASSWORD_FILE = `${FileSystem.documentDirectory || FileSystem.cacheDirectory || ''}visagel_admin_auth.json`;
-const DEFAULT_PASSWORD = 'admin';
+const DEFAULT_ADMIN: AdminAccount = {
+  id: 'admin-root',
+  name: 'Default Admin',
+  loginId: 'admin',
+  password: 'admin',
+  role: 'SUPER_ADMIN',
+  createdAt: new Date().toISOString(),
+};
 
 const AuthContext = createContext<AuthContextType>({
-  adminPassword: DEFAULT_PASSWORD,
+  adminPassword: 'admin',
   isAuthenticated: false,
-  verifyPassword: () => false,
+  currentUser: null,
+  adminAccounts: [DEFAULT_ADMIN],
+  verifyPassword: () => ({ success: false }),
   updatePassword: async () => false,
+  addAdminAccount: async () => false,
+  removeAdminAccount: async () => false,
+  updateAdminAccount: async () => false,
   logout: () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [adminPassword, setAdminPassword] = useState<string>(DEFAULT_PASSWORD);
+  const [adminAccounts, setAdminAccounts] = useState<AdminAccount[]>([DEFAULT_ADMIN]);
+  const [currentUser, setCurrentUser] = useState<AdminAccount | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
   useEffect(() => {
@@ -32,58 +59,128 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (info.exists) {
             const content = await FileSystem.readAsStringAsync(PASSWORD_FILE);
             const data = JSON.parse(content);
-            if (data?.adminPassword) {
-              setAdminPassword(data.adminPassword);
-            } else if (data?.adminPin) {
+            if (Array.isArray(data?.accounts) && data.accounts.length > 0) {
+              setAdminAccounts(data.accounts);
+            } else if (data?.adminPassword) {
               // Backward compatibility migration
-              setAdminPassword(data.adminPin);
+              const singleAcc: AdminAccount = {
+                id: 'admin-root',
+                name: 'Main Admin',
+                loginId: 'admin',
+                password: data.adminPassword,
+                role: 'SUPER_ADMIN',
+                createdAt: new Date().toISOString(),
+              };
+              setAdminAccounts([singleAcc]);
             }
           }
         }
       } catch (e) {
-        console.warn('Failed to load stored admin password', e);
+        console.warn('Failed to load stored admin accounts', e);
       }
     })();
   }, []);
 
-  const verifyPassword = (password: string): boolean => {
-    if (password === adminPassword) {
-      setIsAuthenticated(true);
-      return true;
+  const persistAccounts = async (accounts: AdminAccount[]) => {
+    setAdminAccounts(accounts);
+    try {
+      if (PASSWORD_FILE) {
+        await FileSystem.writeAsStringAsync(
+          PASSWORD_FILE,
+          JSON.stringify({ accounts }),
+          { encoding: 'utf8' }
+        );
+      }
+    } catch (e) {
+      console.warn('Failed to persist admin accounts', e);
     }
-    return false;
+  };
+
+  const verifyPassword = (password: string, loginId?: string): { success: boolean; user?: AdminAccount } => {
+    const trimmedPass = password.trim();
+    const trimmedId = loginId?.trim().toLowerCase();
+
+    // Check if matching specific ID + Password, or any account where password matches
+    let matched: AdminAccount | undefined;
+    if (trimmedId) {
+      matched = adminAccounts.find(
+        (a) => a.loginId.toLowerCase() === trimmedId && a.password === trimmedPass
+      );
+    } else {
+      matched = adminAccounts.find((a) => a.password === trimmedPass);
+    }
+
+    if (matched) {
+      setIsAuthenticated(true);
+      setCurrentUser(matched);
+      return { success: true, user: matched };
+    }
+    return { success: false };
   };
 
   const updatePassword = async (newPassword: string): Promise<boolean> => {
     if (!newPassword || newPassword.trim().length === 0) return false;
     const trimmed = newPassword.trim();
-    setAdminPassword(trimmed);
-    try {
-      if (PASSWORD_FILE) {
-        await FileSystem.writeAsStringAsync(
-          PASSWORD_FILE,
-          JSON.stringify({ adminPassword: trimmed }),
-          { encoding: 'utf8' }
-        );
-      }
-      return true;
-    } catch (e) {
-      console.warn('Failed to persist admin password', e);
-      return true;
+    const updated = adminAccounts.map((acc) =>
+      currentUser && acc.id === currentUser.id ? { ...acc, password: trimmed } : (acc.loginId === 'admin' ? { ...acc, password: trimmed } : acc)
+    );
+    await persistAccounts(updated);
+    if (currentUser) {
+      setCurrentUser({ ...currentUser, password: trimmed });
     }
+    return true;
+  };
+
+  const addAdminAccount = async (account: Omit<AdminAccount, 'id' | 'createdAt'>): Promise<boolean> => {
+    const exists = adminAccounts.some(
+      (a) => a.loginId.toLowerCase() === account.loginId.trim().toLowerCase()
+    );
+    if (exists) return false;
+
+    const newAcc: AdminAccount = {
+      ...account,
+      id: `admin-${Date.now()}`,
+      loginId: account.loginId.trim(),
+      password: account.password.trim(),
+      createdAt: new Date().toISOString(),
+    };
+    const updated = [...adminAccounts, newAcc];
+    await persistAccounts(updated);
+    return true;
+  };
+
+  const removeAdminAccount = async (id: string): Promise<boolean> => {
+    if (adminAccounts.length <= 1) return false; // Prevent removing last admin
+    const updated = adminAccounts.filter((a) => a.id !== id);
+    await persistAccounts(updated);
+    return true;
+  };
+
+  const updateAdminAccount = async (id: string, updates: Partial<AdminAccount>): Promise<boolean> => {
+    const updated = adminAccounts.map((a) => (a.id === id ? { ...a, ...updates } : a));
+    await persistAccounts(updated);
+    return true;
   };
 
   const logout = () => {
     setIsAuthenticated(false);
+    setCurrentUser(null);
   };
+
+  const activeAdminPassword = currentUser?.password || adminAccounts[0]?.password || 'admin';
 
   return (
     <AuthContext.Provider
       value={{
-        adminPassword,
+        adminPassword: activeAdminPassword,
         isAuthenticated,
+        currentUser,
+        adminAccounts,
         verifyPassword,
         updatePassword,
+        addAdminAccount,
+        removeAdminAccount,
+        updateAdminAccount,
         logout,
       }}
     >
@@ -93,3 +190,4 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 };
 
 export const useAuth = () => useContext(AuthContext);
+
