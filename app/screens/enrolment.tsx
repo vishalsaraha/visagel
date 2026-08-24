@@ -22,6 +22,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as MailComposer from 'expo-mail-composer';
 import AppDateTimePicker from '@/components/AppDateTimePicker';
+import AppAlertModal from '@/components/AppAlertModal';
 
 const THEME_COLOR = '#FF6900';
 const THEME_COLOR_10_OPACITY = 'rgba(255, 105, 0, 0.1)';
@@ -46,6 +47,12 @@ export default function EnrolmentScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [modalVisible, setModalVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  const [alertConfig, setAlertConfig] = useState<{ visible: boolean; title: string; message: string; buttons?: any[] }>({ visible: false, title: '', message: '' });
+
+  const showAlert = (title: string, message: string, buttons?: any[]) => {
+    setAlertConfig({ visible: true, title, message, buttons });
+  };
   
   const [formData, setFormData] = useState({
     employeeId: 'BR-029',
@@ -123,7 +130,7 @@ export default function EnrolmentScreen() {
           setCameraVisible(false);
         }
       } catch {
-        Alert.alert('Error', 'Failed to capture photo. Please try again.');
+        showAlert('Error', 'Failed to capture photo. Please try again.');
       }
     }
   };
@@ -157,7 +164,7 @@ export default function EnrolmentScreen() {
   };
 
   const handleDeleteEnrolment = (id: string, name: string) => {
-    Alert.alert(
+    showAlert(
       'Delete Enrolment',
       `Are you sure you want to delete ${name}?`,
       [
@@ -167,7 +174,7 @@ export default function EnrolmentScreen() {
           style: 'destructive',
           onPress: async () => {
             await deleteEnrolledEmployee(id);
-            Alert.alert('Deleted', 'Enrolment record removed successfully.');
+            showAlert('Deleted', 'Enrolment record removed successfully.');
           },
         },
       ]
@@ -176,11 +183,11 @@ export default function EnrolmentScreen() {
 
   const handleEnrolment = async () => {
     if (!formData.employeeId.trim()) {
-      Alert.alert('Error', 'Please enter an Employee ID.');
+      showAlert('Error', 'Please enter an Employee ID.');
       return;
     }
     if (!formData.name || !formData.phone) {
-      Alert.alert('Error', 'Please fill in Employee Name and Phone Number.');
+      showAlert('Error', 'Please fill in Employee Name and Phone Number.');
       return;
     }
 
@@ -190,7 +197,7 @@ export default function EnrolmentScreen() {
         (e) => e.employeeId.toLowerCase() === formData.employeeId.trim().toLowerCase()
       );
       if (duplicate) {
-        Alert.alert('Duplicate ID', `Employee ID "${formData.employeeId.trim()}" already exists. Please choose a different ID.`);
+        showAlert('Duplicate ID', `Employee ID "${formData.employeeId.trim()}" already exists. Please choose a different ID.`);
         return;
       }
     }
@@ -205,7 +212,7 @@ export default function EnrolmentScreen() {
         joiningDate: joiningDateStr,
         photoUri: capturedPhoto,
       });
-      Alert.alert('Success', `Successfully updated ${formData.name}!`);
+      showAlert('Success', `Successfully updated ${formData.name}!`);
     } else {
       await addEnrolledEmployee({
         employeeId: formData.employeeId.trim(),
@@ -215,7 +222,7 @@ export default function EnrolmentScreen() {
         joiningDate: joiningDateStr,
         photoUri: capturedPhoto,
       });
-      Alert.alert('Success', `Successfully enrolled ${formData.name} (${formData.employeeId.trim()})!`);
+      showAlert('Success', `Successfully enrolled ${formData.name} (${formData.employeeId.trim()})!`);
     }
 
     setModalVisible(false);
@@ -244,7 +251,7 @@ export default function EnrolmentScreen() {
 
       return fileUri;
     } catch {
-      Alert.alert('Error', 'Failed to generate CSV file.');
+      showAlert('Error', 'Failed to generate CSV file.');
       return null;
     }
   };
@@ -252,7 +259,7 @@ export default function EnrolmentScreen() {
   const handleExportCsv = async () => {
     toggleDock();
     if (filteredList.length === 0) {
-      Alert.alert('Notice', 'No enrolment records available to export.');
+      showAlert('Notice', 'No enrolment records available to export.');
       return;
     }
 
@@ -266,7 +273,7 @@ export default function EnrolmentScreen() {
           UTI: 'public.comma-separated-values-text',
         });
       } else {
-        Alert.alert('Error', 'Sharing is not available on this device.');
+        showAlert('Error', 'Sharing is not available on this device.');
       }
     }
   };
@@ -274,13 +281,13 @@ export default function EnrolmentScreen() {
   const handleShareViaEmail = async () => {
     toggleDock();
     if (filteredList.length === 0) {
-      Alert.alert('Notice', 'No enrolment records available to send.');
+      showAlert('Notice', 'No enrolment records available to send.');
       return;
     }
 
     const isAvailable = await MailComposer.isAvailableAsync();
     if (!isAvailable) {
-      Alert.alert('Error', 'Email composition is not available on this device.');
+      showAlert('Error', 'Email composition is not available on this device.');
       return;
     }
 
@@ -343,7 +350,7 @@ export default function EnrolmentScreen() {
             style={styles.lockBtn}
             activeOpacity={0.8}
             onPress={() => {
-              Alert.alert(
+              showAlert(
                 'Lock Screen',
                 'Lock Admin and return to Attendance Screen?',
                 [
@@ -695,6 +702,14 @@ export default function EnrolmentScreen() {
         onClose={() => setShowDatePicker(false)}
       />
 
+      <AppAlertModal
+        visible={alertConfig.visible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        buttons={alertConfig.buttons}
+        onClose={() => setAlertConfig(prev => ({ ...prev, visible: false }))}
+      />
+
       {/* Camera Modal for Photo Capture & Face Detection (Full Screen) */}
       <Modal
         visible={cameraVisible}
@@ -724,14 +739,10 @@ export default function EnrolmentScreen() {
 
             {/* Centered Face Detection Guide Reticle */}
             <View style={styles.reticleWrapper} pointerEvents="none">
-              <View style={styles.reticleBox}>
-                {/* 4 Corners */}
-                <View style={[styles.camCorner, styles.camCornerTL]} />
-                <View style={[styles.camCorner, styles.camCornerTR]} />
-                <View style={[styles.camCorner, styles.camCornerBL]} />
-                <View style={[styles.camCorner, styles.camCornerBR]} />
+              <View style={[styles.reticleBox, { borderWidth: 3, borderColor: '#FF6900', borderStyle: 'solid' }]}>
+                {/* Solid boxed border */}
               </View>
-              <Text style={styles.reticleHintText}>Align face clearly within corners</Text>
+              <Text style={styles.reticleHintText}>Align face clearly within the box</Text>
             </View>
 
             {/* Footer with capture shutter button */}

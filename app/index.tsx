@@ -49,7 +49,7 @@ export default function AttendanceScreen() {
   const [faceConfidence, setFaceConfidence] = useState(0);
 
   // Auto-attendance toggle
-  const [autoAttendance, setAutoAttendance] = useState(true);
+  const [autoAttendance, setAutoAttendance] = useState(false);
 
   const [lastScanned, setLastScanned] = useState<{
     id: string;
@@ -172,9 +172,9 @@ export default function AttendanceScreen() {
 
       isScanningRef.current = true;
       progressAnim.setValue(0);
-      setFaceConfidence(0);
 
       if (!isAuto) {
+        setFaceConfidence(0);
         setScanPhase('detecting');
         setStatusMessage('Capturing face image...');
       }
@@ -241,8 +241,8 @@ export default function AttendanceScreen() {
           easing: Easing.out(Easing.ease),
           useNativeDriver: false,
         }).start();
+        setFaceConfidence(confidence);
       }
-      setFaceConfidence(confidence);
 
       // Check if match threshold met
       if (index === -1 || confidence < MIN_CONFIDENCE || isCovered) {
@@ -274,6 +274,7 @@ export default function AttendanceScreen() {
       // Successful Match!
       const matchedEmp = pool[index];
       setScanPhase('verified');
+      setFaceConfidence(confidence);
       setStatusMessage(`Verified: ${matchedEmp.name} (${confidence}%)`);
 
       try {
@@ -349,6 +350,10 @@ export default function AttendanceScreen() {
     ? `${activeShift.name} · ${pad(activeShift.startHour)}:${pad(activeShift.startMin)} – ${pad(activeShift.endHour)}:${pad(activeShift.endMin)}`
     : 'No active shift';
 
+  const shiftColor = activeShift 
+    ? (activeShift.name.toLowerCase().includes('night') ? '#6366F1' : '#F59E0B') 
+    : '#94A3B8';
+
   // ── HUD Colour ─────────────────────────────────────────────────────────────
   const hudColor =
     scanPhase === 'verified'
@@ -412,10 +417,10 @@ export default function AttendanceScreen() {
               <MaterialCommunityIcons
                 name="clock-time-eight-outline"
                 size={14}
-                color={activeShift ? '#7C3AED' : '#94A3B8'}
+                color={shiftColor}
                 style={{ marginRight: 6 }}
               />
-              <Text style={[styles.shiftLabel, !activeShift && { color: '#94A3B8' }]}>{shiftLabel}</Text>
+              <Text style={[styles.shiftLabel, { color: shiftColor }]}>{shiftLabel}</Text>
             </View>
             {activeShift && (
               <View style={styles.shiftPunchTypePill}>
@@ -453,15 +458,8 @@ export default function AttendanceScreen() {
                 ]}
               />
               <Text style={styles.autoToggleLabel}>
-                {autoAttendance ? 'Auto Attendance ON' : 'Manual Scan Mode'}
+                {autoAttendance ? 'Auto Attendance ON' : 'Stand by'}
               </Text>
-              <Switch
-                value={autoAttendance}
-                onValueChange={setAutoAttendance}
-                trackColor={{ false: '#E2E8F0', true: '#10B981' }}
-                thumbColor="#FFFFFF"
-                style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
-              />
             </View>
           </View>
         </View>

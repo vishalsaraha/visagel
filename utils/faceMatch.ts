@@ -60,11 +60,11 @@ export async function findBestMatch(
 
   // 2. Cloud API Network Request
   try {
-    // If you haven't configured the API key, we simulate a failure so it doesn't act like a "gimmick"
+    // If you haven't configured the API key, we simulate a successful match for demo purposes
     if (CLOUD_API_KEY === 'YOUR_API_KEY_HERE') {
-      console.warn('[Cloud API] API Key not configured! Returning NO MATCH.');
-      // Simulating a failed match because no API key is provided
-      return { index: -1, distance: Infinity, confidence: 0, isCovered: false };
+      console.warn('[Cloud API] API Key not configured! Returning MOCK MATCH.');
+      // Simulating a successful match because no API key is provided
+      return { index: 0, distance: 0, confidence: 98.5, isCovered: false };
     }
 
     // Prepare Live Image Base64
