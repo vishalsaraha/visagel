@@ -579,7 +579,7 @@ export default function SettingsScreen() {
           {/* Anti-Spoofing */}
           <View style={styles.menuCardRow}>
             <View style={[styles.iconBox, { backgroundColor: '#FDF4FF' }]}>
-              <MaterialCommunityIcons name="shield-eye-outline" size={20} color="#A855F7" />
+              <MaterialCommunityIcons name="shield-lock-outline" size={20} color="#A855F7" />
             </View>
             <View style={styles.menuInfo}>
               <Text style={styles.menuTitle}>Strict Anti-Spoofing</Text>
