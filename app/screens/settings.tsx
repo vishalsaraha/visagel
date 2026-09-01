@@ -1,24 +1,24 @@
-import React, { useState } from 'react';
-import {
-  StyleSheet,
-  Text,
-  View,
-  ScrollView,
-  StatusBar,
-  Switch,
-  TouchableOpacity,
-  Alert,
-  Modal,
-  Linking,
-  TextInput,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import AppDateTimePicker from '@/components/AppDateTimePicker';
+import { CustomField, ShiftEntry, useAttendance } from '@/context/AttendanceContext';
+import { useAuth } from '@/context/AuthContext';
+import { getDepartmentMeta } from '@/utils/departmentIcons';
 import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useAuth } from '@/context/AuthContext';
-import { useAttendance, ShiftEntry, CustomField } from '@/context/AttendanceContext';
-import { getDepartmentMeta } from '@/utils/departmentIcons';
-import AppDateTimePicker from '@/components/AppDateTimePicker';
+import React, { useState } from 'react';
+import {
+  Alert,
+  Linking,
+  Modal,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const THEME_COLOR = '#FF6900';
 const THEME_COLOR_10_OPACITY = 'rgba(255, 105, 0, 0.1)';
@@ -122,7 +122,7 @@ export default function SettingsScreen() {
     visible: false,
     title: 'Select Time',
     value: new Date(),
-    onSave: () => {},
+    onSave: () => { },
   });
 
   const openTimePicker = (title: string, value: Date, onSave: (d: Date) => void) => {
@@ -158,12 +158,12 @@ export default function SettingsScreen() {
       updated = shifts.map((s) =>
         s.id === editingShift.id
           ? {
-              ...s,
-              name: formName.trim(),
-              startHour: formStart.getHours(), startMin: formStart.getMinutes(),
-              endHour: formEnd.getHours(), endMin: formEnd.getMinutes(),
-              lateCutoffHour: formLateCutoff.getHours(), lateCutoffMin: formLateCutoff.getMinutes(),
-            }
+            ...s,
+            name: formName.trim(),
+            startHour: formStart.getHours(), startMin: formStart.getMinutes(),
+            endHour: formEnd.getHours(), endMin: formEnd.getMinutes(),
+            lateCutoffHour: formLateCutoff.getHours(), lateCutoffMin: formLateCutoff.getMinutes(),
+          }
           : s
       );
     } else {
@@ -579,7 +579,7 @@ export default function SettingsScreen() {
           {/* Anti-Spoofing */}
           <View style={styles.menuCardRow}>
             <View style={[styles.iconBox, { backgroundColor: '#FDF4FF' }]}>
-              <MaterialCommunityIcons name="shield-eye-outline" size={20} color="#A855F7" />
+              <MaterialCommunityIcons name="shield-lock-outline" size={20} color="#A855F7" />
             </View>
             <View style={styles.menuInfo}>
               <Text style={styles.menuTitle}>Strict Anti-Spoofing</Text>
