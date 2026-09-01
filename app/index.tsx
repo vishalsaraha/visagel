@@ -183,8 +183,8 @@ export default function AttendanceScreen() {
       try {
         if (cameraRef.current) {
           const photo = await cameraRef.current.takePictureAsync({
-            quality: 0.1,
-            skipProcessing: true,
+            quality: 0.5,
+            skipProcessing: false,
             exif: false,
             mute: true,
             shutterSound: false,

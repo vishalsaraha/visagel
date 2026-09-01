@@ -15,6 +15,7 @@ import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { useAttendance, EmployeeAttendance } from '@/context/AttendanceContext';
+import { getDepartmentMeta } from '@/utils/departmentIcons';
 import * as Calendar from 'expo-calendar';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -32,13 +33,15 @@ export default function DashboardScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDept, setSelectedDept] = useState('All');
 
+  // Multi-select delete state
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
+  const [selectedPunchIds, setSelectedPunchIds] = useState<string[]>([]);
+
   const selectedDateStr = date.toISOString().split('T')[0];
   const dayRecords = attendanceRecords.filter((r) => r.date === selectedDateStr);
 
-  // Dept filter list (always has 'All' first)
   const deptList = ['All', ...departments];
 
-  // Filtered records applying dept filter + search
   const filteredRecords = dayRecords.filter((r) => {
     const matchesDept = selectedDept === 'All' || r.department === selectedDept;
     const q = searchQuery.trim().toLowerCase();
@@ -65,12 +68,46 @@ export default function DashboardScreen() {
           style: 'destructive',
           onPress: async () => {
             await removePunch(employeeId, date, punchId);
-            // Update the local modal state so it re-renders immediately
             setSelectedEmpPunches((prev) =>
               prev
                 ? { ...prev, punches: prev.punches.filter((p) => p.id !== punchId) }
                 : null
             );
+          },
+        },
+      ]
+    );
+  };
+
+  const toggleSelectPunch = (punchId: string) => {
+    setSelectedPunchIds((prev) =>
+      prev.includes(punchId) ? prev.filter((id) => id !== punchId) : [...prev, punchId]
+    );
+  };
+
+  const handleBatchDelete = () => {
+    if (selectedPunchIds.length === 0) return;
+
+    Alert.alert(
+      'Delete Selected Punches',
+      `Are you sure you want to remove ${selectedPunchIds.length} selected punch(es)?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete All',
+          style: 'destructive',
+          onPress: async () => {
+            if (!selectedEmpPunches) return;
+            for (const punchId of selectedPunchIds) {
+              await removePunch(selectedEmpPunches.employeeId, selectedEmpPunches.date, punchId);
+            }
+            setSelectedEmpPunches((prev) =>
+              prev
+                ? { ...prev, punches: prev.punches.filter((p) => !selectedPunchIds.includes(p.id)) }
+                : null
+            );
+            setSelectedPunchIds([]);
+            setIsMultiSelectMode(false);
           },
         },
       ]
@@ -233,7 +270,6 @@ export default function DashboardScreen() {
 
         {/* Department Filter + Search Bar */}
         <View style={styles.filterContainer}>
-          {/* Search input */}
           <View style={styles.searchBox}>
             <FontAwesome name="search" size={13} color="#94A3B8" style={{ marginRight: 8 }} />
             <TextInput
@@ -252,32 +288,44 @@ export default function DashboardScreen() {
             )}
           </View>
 
-          {/* Department pills */}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.deptScroll}
           >
-            {deptList.map((dept) => (
-              <TouchableOpacity
-                key={dept}
-                style={[
-                  styles.deptPill,
-                  selectedDept === dept ? styles.deptPillActive : styles.deptPillInactive,
-                ]}
-                onPress={() => setSelectedDept(dept)}
-                activeOpacity={0.75}
-              >
-                <Text
+            {deptList.map((dept) => {
+              const isSelected = selectedDept === dept;
+              const dMeta = getDepartmentMeta(dept === 'All' ? null : dept);
+              return (
+                <TouchableOpacity
+                  key={dept}
                   style={[
-                    styles.deptPillText,
-                    selectedDept === dept ? styles.deptPillTextActive : styles.deptPillTextInactive,
+                    styles.deptPill,
+                    isSelected ? styles.deptPillActive : styles.deptPillInactive,
+                    { flexDirection: 'row', alignItems: 'center' },
                   ]}
+                  onPress={() => setSelectedDept(dept)}
+                  activeOpacity={0.75}
                 >
-                  {dept}
-                </Text>
-              </TouchableOpacity>
-            ))}
+                  {dept !== 'All' && (
+                    <MaterialCommunityIcons
+                      name={dMeta.icon as any}
+                      size={12}
+                      color={isSelected ? '#FFFFFF' : dMeta.color}
+                      style={{ marginRight: 4 }}
+                    />
+                  )}
+                  <Text
+                    style={[
+                      styles.deptPillText,
+                      isSelected ? styles.deptPillTextActive : styles.deptPillTextInactive,
+                    ]}
+                  >
+                    {dept}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         </View>
 
@@ -314,7 +362,7 @@ export default function DashboardScreen() {
           </View>
         ) : (
           <View style={styles.cardsList}>
-            {filteredRecords.map((item, index) => {
+            {filteredRecords.map((item) => {
               const firstIn = item.punches.find((p) => p.type === 'IN')?.time || '--:--';
               const lastOut = [...item.punches].reverse().find((p) => p.type === 'OUT')?.time || '--:--';
 
@@ -323,16 +371,30 @@ export default function DashboardScreen() {
                   key={item.id}
                   style={styles.recordCard}
                   activeOpacity={0.8}
-                  onPress={() => setSelectedEmpPunches(item)}
+                  onPress={() => {
+                    setIsMultiSelectMode(false);
+                    setSelectedPunchIds([]);
+                    setSelectedEmpPunches(item);
+                  }}
                 >
-                  {/* Top row: Avatar + Name + Punch count badge */}
                   <View style={styles.cardTopRow}>
                     <View style={styles.avatarCircle}>
                       <FontAwesome name="user" size={16} color="#FF6900" />
                     </View>
                     <View style={{ flex: 1, marginLeft: 10 }}>
                       <Text style={styles.empNameText}>{item.name}</Text>
-                      <Text style={styles.empIdText}>{item.employeeId}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 6, flexWrap: 'wrap' }}>
+                        <Text style={styles.empIdText}>{item.employeeId}</Text>
+                        {item.department ? (() => {
+                          const dMeta = getDepartmentMeta(item.department);
+                          return (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: dMeta.bg, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, borderWidth: 1, borderColor: dMeta.border || '#E2E8F0' }}>
+                              <MaterialCommunityIcons name={dMeta.icon as any} size={10} color={dMeta.color} style={{ marginRight: 3 }} />
+                              <Text style={{ fontSize: 10, fontWeight: '700', color: dMeta.color }}>{item.department}</Text>
+                            </View>
+                          );
+                        })() : null}
+                      </View>
                     </View>
                     <View style={styles.punchCountBadge}>
                       <MaterialCommunityIcons name="gesture-tap" size={11} color="#2563EB" style={{ marginRight: 3 }} />
@@ -342,7 +404,6 @@ export default function DashboardScreen() {
                     </View>
                   </View>
 
-                  {/* Bottom row: Time In & Time Out Pills */}
                   <View style={styles.timingRow}>
                     <View style={styles.timePillIn}>
                       <MaterialCommunityIcons name="login" size={13} color="#059669" style={{ marginRight: 5 }} />
@@ -376,7 +437,11 @@ export default function DashboardScreen() {
         visible={!!selectedEmpPunches}
         animationType="fade"
         transparent={true}
-        onRequestClose={() => setSelectedEmpPunches(null)}
+        onRequestClose={() => {
+          setSelectedEmpPunches(null);
+          setIsMultiSelectMode(false);
+          setSelectedPunchIds([]);
+        }}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.detailCard}>
@@ -389,62 +454,121 @@ export default function DashboardScreen() {
               </View>
               <TouchableOpacity
                 style={styles.closeDetailBtn}
-                onPress={() => setSelectedEmpPunches(null)}
+                onPress={() => {
+                  setSelectedEmpPunches(null);
+                  setIsMultiSelectMode(false);
+                  setSelectedPunchIds([]);
+                }}
               >
                 <FontAwesome name="close" size={16} color="#64748B" />
               </TouchableOpacity>
             </View>
 
             <View style={styles.punchTimelineList}>
-              <Text style={styles.timelineSectionTitle}>Punches Log ({selectedEmpPunches?.punches.length})</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={styles.timelineSectionTitle}>
+                  Punches Log ({selectedEmpPunches?.punches.length})
+                </Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    setIsMultiSelectMode(!isMultiSelectMode);
+                    setSelectedPunchIds([]);
+                  }}
+                  style={styles.toggleSelectBtn}
+                >
+                  <Text style={styles.toggleSelectBtnText}>
+                    {isMultiSelectMode ? 'Cancel Select' : 'Select Multiple'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
               <ScrollView style={{ maxHeight: 260 }} showsVerticalScrollIndicator={false}>
-                {selectedEmpPunches?.punches.map((punch, pIdx) => (
-                  <View key={punch.id} style={styles.timelineRow}>
-                    <View style={[styles.punchTypeDot, punch.type === 'IN' ? styles.inDot : styles.outDot]}>
-                      <MaterialCommunityIcons
-                        name={punch.type === 'IN' ? 'login' : 'logout'}
-                        size={13}
-                        color="#FFFFFF"
-                      />
-                    </View>
-                    <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={styles.punchTypeTitle}>
-                        {punch.type === 'IN' ? 'Time In' : 'Time Out'}
-                      </Text>
-                      <Text style={styles.punchTimeSubtitle}>{punch.time}</Text>
-                    </View>
-                    <View style={[styles.punchTag, punch.type === 'IN' ? styles.inTag : styles.outTag]}>
-                      <Text style={[styles.punchTagText, punch.type === 'IN' ? styles.inTagText : styles.outTagText]}>
-                        Punch #{pIdx + 1}
-                      </Text>
-                    </View>
-                    {/* Delete punch button */}
+                {selectedEmpPunches?.punches.map((punch, pIdx) => {
+                  const isSelected = selectedPunchIds.includes(punch.id);
+
+                  return (
                     <TouchableOpacity
-                      style={styles.deletePunchBtn}
-                      onPress={() =>
-                        handleDeletePunch(
-                          selectedEmpPunches!.employeeId,
-                          selectedEmpPunches!.date,
-                          punch.id,
-                          punch.time
-                        )
-                      }
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      key={punch.id}
+                      style={[
+                        styles.timelineRow,
+                        isMultiSelectMode && isSelected && { backgroundColor: '#FEF2F2', borderRadius: 8 }
+                      ]}
+                      activeOpacity={isMultiSelectMode ? 0.7 : 1}
+                      onPress={() => {
+                        if (isMultiSelectMode) {
+                          toggleSelectPunch(punch.id);
+                        }
+                      }}
                     >
-                      <MaterialCommunityIcons name="trash-can-outline" size={16} color="#EF4444" />
+                      {isMultiSelectMode && (
+                        <View style={[styles.checkboxBox, isSelected && styles.checkboxBoxChecked]}>
+                          {isSelected && <FontAwesome name="check" size={10} color="#FFFFFF" />}
+                        </View>
+                      )}
+
+                      <View style={[styles.punchTypeDot, punch.type === 'IN' ? styles.inDot : styles.outDot]}>
+                        <MaterialCommunityIcons
+                          name={punch.type === 'IN' ? 'login' : 'logout'}
+                          size={13}
+                          color="#FFFFFF"
+                        />
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <Text style={styles.punchTypeTitle}>
+                          {punch.type === 'IN' ? 'Time In' : 'Time Out'}
+                        </Text>
+                        <Text style={styles.punchTimeSubtitle}>{punch.time}</Text>
+                      </View>
+                      <View style={[styles.punchTag, punch.type === 'IN' ? styles.inTag : styles.outTag]}>
+                        <Text style={[styles.punchTagText, punch.type === 'IN' ? styles.inTagText : styles.outTagText]}>
+                          Punch #{pIdx + 1}
+                        </Text>
+                      </View>
+
+                      {!isMultiSelectMode && (
+                        <TouchableOpacity
+                          style={styles.deletePunchBtn}
+                          onPress={() =>
+                            handleDeletePunch(
+                              selectedEmpPunches!.employeeId,
+                              selectedEmpPunches!.date,
+                              punch.id,
+                              punch.time
+                            )
+                          }
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <MaterialCommunityIcons name="trash-can-outline" size={16} color="#EF4444" />
+                        </TouchableOpacity>
+                      )}
                     </TouchableOpacity>
-                  </View>
-                ))}
+                  );
+                })}
               </ScrollView>
             </View>
 
-            <TouchableOpacity
-              style={styles.closeModalBtn}
-              onPress={() => setSelectedEmpPunches(null)}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.closeModalBtnText}>Close</Text>
-            </TouchableOpacity>
+            {isMultiSelectMode && selectedPunchIds.length > 0 ? (
+              <TouchableOpacity
+                style={styles.batchDeleteBtn}
+                onPress={handleBatchDelete}
+                activeOpacity={0.85}
+              >
+                <MaterialCommunityIcons name="trash-can" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.batchDeleteBtnText}>Delete Selected ({selectedPunchIds.length})</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.closeModalBtn}
+                onPress={() => {
+                  setSelectedEmpPunches(null);
+                  setIsMultiSelectMode(false);
+                  setSelectedPunchIds([]);
+                }}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.closeModalBtnText}>Close</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Modal>
@@ -851,14 +975,42 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#334155',
-    marginBottom: 12,
+  },
+  toggleSelectBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+  },
+  toggleSelectBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#C2410C',
   },
   timelineRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 8,
+    paddingHorizontal: 4,
     borderBottomWidth: 1,
     borderBottomColor: '#F8FAFC',
+  },
+  checkboxBox: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+    backgroundColor: '#FFFFFF',
+  },
+  checkboxBoxChecked: {
+    backgroundColor: '#EF4444',
+    borderColor: '#EF4444',
   },
   punchTypeDot: {
     width: 28,
@@ -920,7 +1072,24 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
-  // ── New: Filter & Search styles ──────────────────────────────────────────
+  batchDeleteBtn: {
+    flexDirection: 'row',
+    backgroundColor: '#EF4444',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  batchDeleteBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
   filterContainer: {
     marginBottom: 14,
     gap: 10,
@@ -970,7 +1139,6 @@ const styles = StyleSheet.create({
   deptPillTextInactive: {
     color: '#64748B',
   },
-  // ── New: Delete punch button ─────────────────────────────────────────────
   deletePunchBtn: {
     width: 28,
     height: 28,
@@ -982,4 +1150,4 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#FECACA',
   },
-});
+});

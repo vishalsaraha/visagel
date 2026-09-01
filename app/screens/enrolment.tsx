@@ -18,6 +18,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { useAttendance, EnrolledEmployee } from '@/context/AttendanceContext';
+import { getDepartmentMeta } from '@/utils/departmentIcons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as MailComposer from 'expo-mail-composer';
@@ -44,6 +45,8 @@ export default function EnrolmentScreen() {
   type Department = (typeof DEPT_FILTER_LIST)[number];
 
   const [selectedDept, setSelectedDept] = useState<Department>('All');
+  const [viewMode, setViewMode] = useState<'folder' | 'list'>('folder');
+  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [modalVisible, setModalVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -116,6 +119,13 @@ export default function EnrolmentScreen() {
       requestPermission();
     }
   }, [permission, requestPermission]);
+
+  const toggleFolder = (folderDept: string) => {
+    setCollapsedFolders((prev) => ({
+      ...prev,
+      [folderDept]: !prev[folderDept],
+    }));
+  };
 
   const handleInputChange = (field: string, value: string) => {
     setFormData({ ...formData, [field]: value });
@@ -232,7 +242,7 @@ export default function EnrolmentScreen() {
 
   const generateCsvFile = async (): Promise<string | null> => {
     try {
-      let csvHeader = 'Employee ID,Full Name,Department,Phone Number,Joining Date,Face Mapped\n';
+      let csvHeader = 'Employee ID,Full Name,Department,Phone Number,Joining Date,Face Enrolled\n';
       let csvRows = filteredList
         .map(
           (item) =>
@@ -398,13 +408,22 @@ export default function EnrolmentScreen() {
           {DEPT_FILTER_LIST.map((dept) => {
             const isSelected = selectedDept === dept;
             const count = dept === 'All' ? enrolledEmployees.length : enrolledEmployees.filter((e) => e.department === dept).length;
+            const dMeta = getDepartmentMeta(dept === 'All' ? null : dept);
             return (
               <TouchableOpacity
                 key={dept}
-                style={[styles.deptPill, isSelected ? styles.deptPillActive : styles.deptPillInactive]}
+                style={[styles.deptPill, isSelected ? styles.deptPillActive : styles.deptPillInactive, { flexDirection: 'row', alignItems: 'center' }]}
                 onPress={() => setSelectedDept(dept as Department)}
                 activeOpacity={0.75}
               >
+                {dept !== 'All' && (
+                  <MaterialCommunityIcons
+                    name={dMeta.icon as any}
+                    size={13}
+                    color={isSelected ? '#FFFFFF' : dMeta.color}
+                    style={{ marginRight: 5 }}
+                  />
+                )}
                 <Text style={[styles.deptPillText, isSelected ? styles.deptPillTextActive : styles.deptPillTextInactive]}>
                   {dept}
                 </Text>
@@ -422,24 +441,268 @@ export default function EnrolmentScreen() {
       {/* List View */}
       <View style={styles.listContainer}>
         <View style={styles.listHeaderRow}>
-          <Text style={styles.sectionSubTitle}>
-            {selectedDept === 'All' ? 'All Employees' : `${selectedDept} Department`} ({filteredList.length})
-          </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.sectionSubTitle}>
+              {selectedDept === 'All' ? 'All Employees' : `${selectedDept} Department`} ({filteredList.length})
+            </Text>
+          </View>
+          
+          {/* View Mode Toggle: Folders vs List */}
+          <View style={styles.viewModeToggleWrap}>
+            <TouchableOpacity
+              style={[styles.viewModeBtn, viewMode === 'folder' && styles.viewModeBtnActive]}
+              onPress={() => setViewMode('folder')}
+              activeOpacity={0.75}
+            >
+              <MaterialCommunityIcons
+                name="folder-table-outline"
+                size={14}
+                color={viewMode === 'folder' ? '#FF6900' : '#94A3B8'}
+              />
+              <Text style={[styles.viewModeBtnText, viewMode === 'folder' && styles.viewModeBtnTextActive]}>
+                Folders
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.viewModeBtn, viewMode === 'list' && styles.viewModeBtnActive]}
+              onPress={() => setViewMode('list')}
+              activeOpacity={0.75}
+            >
+              <MaterialCommunityIcons
+                name="format-list-bulleted"
+                size={14}
+                color={viewMode === 'list' ? '#FF6900' : '#94A3B8'}
+              />
+              <Text style={[styles.viewModeBtnText, viewMode === 'list' && styles.viewModeBtnTextActive]}>
+                Flat
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity onPress={handleOpenAddModal} style={styles.quickAddBtn}>
             <FontAwesome name="plus" size={12} color="#FF6900" style={{ marginRight: 4 }} />
             <Text style={styles.quickAddBtnText}>Add</Text>
           </TouchableOpacity>
         </View>
 
-        {filteredList.length === 0 ? (
+        {filteredList.length === 0 && selectedDept !== 'All' ? (
           <View style={styles.emptyContainer}>
-            <MaterialCommunityIcons name="account-search-outline" size={48} color="#CBD5E1" />
+            <MaterialCommunityIcons name="folder-open-outline" size={48} color="#CBD5E1" />
             <Text style={styles.emptyTitle}>No Employees Found</Text>
             <Text style={styles.emptySubtitle}>
               {searchQuery ? `No results for "${searchQuery}"` : `No employees registered in ${selectedDept}.`}
             </Text>
           </View>
+        ) : viewMode === 'folder' ? (
+          /* ========================================================================= */
+          /* 📁 PROFESSIONAL ENTERPRISE FOLDER DIRECTORY STRUCTURE                     */
+          /* ========================================================================= */
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+            {(() => {
+              // Group filtered employees by Department
+              const groups: Record<string, typeof filteredList> = {};
+              filteredList.forEach((emp) => {
+                const d = emp.department || 'General';
+                if (!groups[d]) groups[d] = [];
+                groups[d].push(emp);
+              });
+
+              // If a specific department is selected, show only that department
+              // If 'All' is selected, display ALL departments registered in system
+              const deptsToDisplay = selectedDept === 'All'
+                ? Array.from(new Set([...contextDepts, ...Object.keys(groups)]))
+                : [selectedDept];
+
+              return deptsToDisplay.map((deptName) => {
+                const empsInDept = groups[deptName] || [];
+                // If searching and this folder has 0 matching employees, skip
+                if (searchQuery.trim() && empsInDept.length === 0) return null;
+
+                const isCollapsed = Boolean(collapsedFolders[deptName]);
+                const dMeta = getDepartmentMeta(deptName);
+                const faceEnrolledCount = empsInDept.filter((e) => Boolean(e.photoUri)).length;
+                const percent = empsInDept.length > 0 ? Math.round((faceEnrolledCount / empsInDept.length) * 100) : 0;
+
+                return (
+                  <View key={deptName} style={[styles.folderCard, { borderColor: isCollapsed ? '#E2E8F0' : dMeta.color + '40' }]}>
+                    {/* Folder Header */}
+                    <TouchableOpacity
+                      style={[styles.folderHeader, { backgroundColor: isCollapsed ? '#FFFFFF' : dMeta.bg }]}
+                      onPress={() => toggleFolder(deptName)}
+                      activeOpacity={0.85}
+                    >
+                      <View style={styles.folderHeaderLeft}>
+                        <View style={[styles.folderIconBox, { backgroundColor: isCollapsed ? dMeta.bg : '#FFFFFF', borderColor: dMeta.border || '#E2E8F0' }]}>
+                          <MaterialCommunityIcons
+                            name={isCollapsed ? 'folder' : 'folder-open'}
+                            size={22}
+                            color={dMeta.color}
+                          />
+                        </View>
+                        <View style={{ marginLeft: 12, flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                            <Text style={styles.folderTitle}>{deptName}</Text>
+                            <View style={[styles.folderBadge, { backgroundColor: isCollapsed ? dMeta.bg : '#FFFFFF', borderColor: dMeta.border || '#E2E8F0', borderWidth: 1 }]}>
+                              <Text style={[styles.folderBadgeText, { color: dMeta.color }]}>
+                                {empsInDept.length} {empsInDept.length === 1 ? 'Employee' : 'Employees'}
+                              </Text>
+                            </View>
+                          </View>
+
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 10 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                              <MaterialCommunityIcons
+                                name="face-recognition"
+                                size={12}
+                                color={faceEnrolledCount === empsInDept.length && empsInDept.length > 0 ? '#059669' : '#D97706'}
+                                style={{ marginRight: 4 }}
+                              />
+                              <Text style={[styles.folderMetaText, { color: faceEnrolledCount === empsInDept.length && empsInDept.length > 0 ? '#059669' : '#64748B' }]}>
+                                {faceEnrolledCount}/{empsInDept.length} Face Enrolled {empsInDept.length > 0 ? `(${percent}%)` : ''}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                      </View>
+
+                      <View style={styles.folderHeaderRight}>
+                        <View style={[styles.folderChevronBox, !isCollapsed && { backgroundColor: '#FFFFFF', borderColor: dMeta.border || '#E2E8F0', borderWidth: 1 }]}>
+                          <FontAwesome
+                            name={isCollapsed ? 'chevron-right' : 'chevron-down'}
+                            size={12}
+                            color={isCollapsed ? '#94A3B8' : dMeta.color}
+                          />
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+
+                    {/* Progress Bar under open folder */}
+                    {!isCollapsed && empsInDept.length > 0 && (
+                      <View style={{ height: 3, backgroundColor: '#E2E8F0', width: '100%' }}>
+                        <View style={{ height: '100%', width: `${percent}%`, backgroundColor: dMeta.color }} />
+                      </View>
+                    )}
+
+                    {/* Folder Files / Employee Records (when open) */}
+                    {!isCollapsed && (
+                      <View style={styles.folderContentContainer}>
+                        {empsInDept.length === 0 ? (
+                          <View style={styles.folderEmptyBox}>
+                            <MaterialCommunityIcons name="account-plus-outline" size={26} color="#94A3B8" />
+                            <Text style={styles.folderEmptyText}>No staff enrolled in {deptName} yet</Text>
+                            <TouchableOpacity
+                              style={[styles.folderEmptyAddBtn, { backgroundColor: dMeta.bg, borderColor: dMeta.border || '#E2E8F0' }]}
+                              onPress={() => {
+                                setEditingId(null);
+                                setFormData({
+                                  employeeId: `BR-0${(26 + enrolledEmployees.length + 1).toString().padStart(2, '0')}`,
+                                  name: '',
+                                  department: deptName,
+                                  phone: '',
+                                  joiningDate: new Date(),
+                                });
+                                setCapturedPhoto(null);
+                                setModalVisible(true);
+                              }}
+                            >
+                              <FontAwesome name="plus" size={11} color={dMeta.color} style={{ marginRight: 4 }} />
+                              <Text style={[styles.folderEmptyAddBtnText, { color: dMeta.color }]}>Enroll in {deptName}</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : (
+                          empsInDept.map((item, idx) => (
+                            <View
+                              key={item.id}
+                              style={[
+                                styles.folderEmployeeItem,
+                                idx < empsInDept.length - 1 && styles.folderEmployeeItemBorder,
+                              ]}
+                            >
+                              {/* Professional Folder Branch Line */}
+                              <View style={styles.folderFileTreeBranch}>
+                                <View style={styles.folderTreeLine} />
+                                <View style={styles.folderTreeCorner} />
+                              </View>
+
+                              <View style={{ flex: 1 }}>
+                                <View style={styles.cardHeaderRow}>
+                                  <View style={[styles.cardAvatarCircle, item.photoUri ? { borderColor: '#A7F3D0', backgroundColor: '#ECFDF5' } : null]}>
+                                    <FontAwesome
+                                      name="user"
+                                      size={14}
+                                      color={item.photoUri ? '#059669' : '#FF6900'}
+                                    />
+                                  </View>
+                                  <View style={{ flex: 1, marginLeft: 10 }}>
+                                    <Text style={styles.cardEmpName}>{item.name}</Text>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 6, flexWrap: 'wrap' }}>
+                                      <Text style={styles.cardEmpIdBadge}>{item.employeeId}</Text>
+                                      <View style={[styles.cardDeptBadge, { backgroundColor: dMeta.bg, borderColor: dMeta.border || '#E2E8F0', borderWidth: 1, flexDirection: 'row', alignItems: 'center' }]}>
+                                        <MaterialCommunityIcons name={dMeta.icon as any} size={10} color={dMeta.color} style={{ marginRight: 3 }} />
+                                        <Text style={[styles.cardDeptBadgeText, { color: dMeta.color }]}>{item.department || 'General'}</Text>
+                                      </View>
+                                    </View>
+                                  </View>
+
+                                  {/* Actions */}
+                                  <View style={styles.cardActionRow}>
+                                    <TouchableOpacity
+                                      style={styles.iconEditButton}
+                                      onPress={() => handleOpenEditModal(item)}
+                                    >
+                                      <FontAwesome name="pencil" size={13} color="#2563EB" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={styles.iconDeleteButton}
+                                      onPress={() => handleDeleteEnrolment(item.id, item.name)}
+                                    >
+                                      <FontAwesome name="trash" size={13} color="#EF4444" />
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+
+                                {/* Details */}
+                                <View style={styles.cardDetailsRow}>
+                                  <View style={styles.detailTag}>
+                                    <FontAwesome name="phone" size={11} color="#64748B" style={{ marginRight: 4 }} />
+                                    <Text style={styles.detailTagText}>{item.phone}</Text>
+                                  </View>
+
+                                  {item.joiningDate && (
+                                    <View style={styles.detailTag}>
+                                      <FontAwesome name="calendar" size={10} color="#64748B" style={{ marginRight: 4 }} />
+                                      <Text style={styles.detailTagText}>{item.joiningDate}</Text>
+                                    </View>
+                                  )}
+
+                                  <View style={[styles.faceMappedBadge, { backgroundColor: item.photoUri ? '#ECFDF5' : '#FFF7ED', borderColor: item.photoUri ? '#A7F3D0' : '#FED7AA' }]}>
+                                    <MaterialCommunityIcons
+                                      name={item.photoUri ? 'face-recognition' : 'face-man-shimmer-outline'}
+                                      size={12}
+                                      color={item.photoUri ? '#059669' : '#C2410C'}
+                                      style={{ marginRight: 3 }}
+                                    />
+                                    <Text style={[styles.faceMappedText, { color: item.photoUri ? '#059669' : '#C2410C' }]}>
+                                      {item.photoUri ? 'Face Enrolled' : 'Pending Face'}
+                                    </Text>
+                                  </View>
+                                </View>
+                              </View>
+                            </View>
+                          ))
+                        )}
+                      </View>
+                    )}
+                  </View>
+                );
+              });
+            })()}
+          </ScrollView>
         ) : (
+          /* ========================================================================= */
+          /* 📋 FLAT LIST VIEW                                                         */
+          /* ========================================================================= */
           <FlatList
             data={filteredList}
             keyExtractor={(item) => item.id}
@@ -455,9 +718,15 @@ export default function EnrolmentScreen() {
                     <Text style={styles.cardEmpName}>{item.name}</Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 6, flexWrap: 'wrap' }}>
                       <Text style={styles.cardEmpIdBadge}>{item.employeeId}</Text>
-                      <View style={styles.cardDeptBadge}>
-                        <Text style={styles.cardDeptBadgeText}>{item.department || 'General'}</Text>
-                      </View>
+                      {(() => {
+                        const dMeta = getDepartmentMeta(item.department);
+                        return (
+                          <View style={[styles.cardDeptBadge, { backgroundColor: dMeta.bg, borderColor: dMeta.border || '#E2E8F0', borderWidth: 1, flexDirection: 'row', alignItems: 'center' }]}>
+                            <MaterialCommunityIcons name={dMeta.icon as any} size={11} color={dMeta.color} style={{ marginRight: 3 }} />
+                            <Text style={[styles.cardDeptBadgeText, { color: dMeta.color }]}>{item.department || 'General'}</Text>
+                          </View>
+                        );
+                      })()}
                     </View>
                   </View>
 
@@ -500,7 +769,7 @@ export default function EnrolmentScreen() {
                       style={{ marginRight: 3 }}
                     />
                     <Text style={[styles.faceMappedText, { color: item.photoUri ? '#059669' : '#C2410C' }]}>
-                      {item.photoUri ? 'Face Mapped' : 'Pending Face'}
+                      {item.photoUri ? 'Face Enrolled' : 'Pending Face'}
                     </Text>
                   </View>
                 </View>
@@ -584,15 +853,7 @@ export default function EnrolmentScreen() {
                 <View style={styles.deptGridWrap}>
                   {contextDepts.map((dept) => {
                     const isActive = formData.department === dept;
-                    const deptMeta: Record<string, { icon: string; color: string; bg: string }> = {
-                      'Engineering':  { icon: 'cog',              color: '#2563EB', bg: '#EFF6FF' },
-                      'HR & Admin':   { icon: 'account-tie',      color: '#7C3AED', bg: '#F5F3FF' },
-                      'Design':       { icon: 'palette',          color: '#DB2777', bg: '#FDF2F8' },
-                      'Marketing':    { icon: 'bullhorn',         color: '#D97706', bg: '#FFFBEB' },
-                      'Finance':      { icon: 'currency-usd',     color: '#059669', bg: '#ECFDF5' },
-                      'Operations':   { icon: 'clipboard-list',   color: '#0284C7', bg: '#F0F9FF' },
-                    };
-                    const meta = deptMeta[dept] ?? { icon: 'briefcase', color: '#64748B', bg: '#F8FAFC' };
+                    const meta = getDepartmentMeta(dept);
                     return (
                       <TouchableOpacity
                         key={dept}
@@ -948,13 +1209,45 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 10,
+    gap: 8,
   },
   sectionSubTitle: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#64748B',
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+  viewModeToggleWrap: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 2,
+  },
+  viewModeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    gap: 4,
+  },
+  viewModeBtnActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  viewModeBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  viewModeBtnTextActive: {
+    color: '#0F172A',
+    fontWeight: '700',
   },
   quickAddBtn: {
     flexDirection: 'row',
@@ -963,8 +1256,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#FFEDD5',
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    paddingVertical: 5,
+    borderRadius: 10,
   },
   quickAddBtnText: {
     fontSize: 12,
@@ -974,6 +1267,148 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 90,
     gap: 10,
+  },
+  // ── Folder Structure Styles ──
+  folderCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    overflow: 'hidden',
+    shadowColor: '#64748B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+    marginBottom: 4,
+  },
+  folderHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  folderHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  folderIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  folderTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  folderBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginLeft: 6,
+  },
+  folderBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  folderMetaText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  folderHeaderRight: {
+    marginLeft: 8,
+  },
+  folderChevronBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#F8FAFC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  folderContentContainer: {
+    backgroundColor: '#F8FAFC',
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    paddingLeft: 12,
+    paddingRight: 10,
+    paddingVertical: 8,
+  },
+  folderEmployeeItem: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    marginVertical: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  folderEmployeeItemBorder: {
+    marginBottom: 4,
+  },
+  folderFileTreeBranch: {
+    width: 16,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    marginRight: 4,
+  },
+  folderTreeLine: {
+    width: 2,
+    height: '100%',
+    backgroundColor: '#CBD5E1',
+    position: 'absolute',
+    left: 2,
+    top: 0,
+  },
+  folderTreeCorner: {
+    width: 8,
+    height: 2,
+    backgroundColor: '#CBD5E1',
+    marginTop: 18,
+    marginLeft: 2,
+  },
+  folderEmptyBox: {
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderStyle: 'dashed',
+    marginVertical: 4,
+  },
+  folderEmptyText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+    marginTop: 6,
+    marginBottom: 10,
+  },
+  folderEmptyAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  folderEmptyAddBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
   },
   emptyContainer: {
     alignItems: 'center',

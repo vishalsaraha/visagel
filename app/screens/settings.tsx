@@ -17,6 +17,7 @@ import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { useAttendance, ShiftEntry, CustomField } from '@/context/AttendanceContext';
+import { getDepartmentMeta } from '@/utils/departmentIcons';
 import AppDateTimePicker from '@/components/AppDateTimePicker';
 
 const THEME_COLOR = '#FF6900';
@@ -634,21 +635,24 @@ export default function SettingsScreen() {
                   <Text style={styles.emptyFieldsText}>No departments added yet</Text>
                 </View>
               ) : (
-                departments.map((dept) => (
-                  <View key={dept} style={styles.fieldListRow}>
-                    <View style={[styles.fieldTypeTag, { backgroundColor: '#F0FDF4', borderColor: '#A7F3D0' }]}>
-                      <MaterialCommunityIcons name="office-building-outline" size={14} color="#059669" />
+                departments.map((dept) => {
+                  const dMeta = getDepartmentMeta(dept);
+                  return (
+                    <View key={dept} style={styles.fieldListRow}>
+                      <View style={[styles.fieldTypeTag, { backgroundColor: dMeta.bg, borderColor: dMeta.border || '#A7F3D0' }]}>
+                        <MaterialCommunityIcons name={dMeta.icon as any} size={14} color={dMeta.color} />
+                      </View>
+                      <Text style={styles.fieldListLabel}>{dept}</Text>
+                      <TouchableOpacity
+                        style={styles.fieldDeleteBtn}
+                        onPress={() => handleRemoveDepartment(dept)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <MaterialCommunityIcons name="trash-can-outline" size={16} color="#EF4444" />
+                      </TouchableOpacity>
                     </View>
-                    <Text style={styles.fieldListLabel}>{dept}</Text>
-                    <TouchableOpacity
-                      style={styles.fieldDeleteBtn}
-                      onPress={() => handleRemoveDepartment(dept)}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <MaterialCommunityIcons name="trash-can-outline" size={16} color="#EF4444" />
-                    </TouchableOpacity>
-                  </View>
-                ))
+                  );
+                })
               )}
             </ScrollView>
           </View>

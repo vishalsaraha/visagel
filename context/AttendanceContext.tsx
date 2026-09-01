@@ -93,7 +93,20 @@ const FIELDS_FILE    = `${base}visagel_custom_fields.json`;
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
 export const DEFAULT_DEPARTMENTS: string[] = [
-  'Engineering', 'HR & Admin', 'Design', 'Marketing', 'Finance', 'Operations',
+  'Engineering',
+  'IT & Infrastructure',
+  'HR & Admin',
+  'Design',
+  'Marketing',
+  'Sales',
+  'Finance',
+  'Operations',
+  'Quality Assurance',
+  'Customer Support',
+  'Legal & Compliance',
+  'Manufacturing',
+  'Medical & Healthcare',
+  'Security',
 ];
 
 const DEFAULT_ENROLLED: EnrolledEmployee[] = [
