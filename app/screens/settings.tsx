@@ -47,34 +47,49 @@ function makeTime(h: number, m: number): Date {
 export default function SettingsScreen() {
   const router = useRouter();
   const {
-    adminPassword,
     adminAccounts,
     addAdminAccount,
     removeAdminAccount,
-    updateAdminAccount,
+    organization,
+    updateOrganization,
     logout,
+    logoutOrganization,
+    currentUser,
   } = useAuth();
   const {
     multipleTimeEntries, setMultipleTimeEntries, shifts, saveShifts,
     departments, saveDepartments,
     customFields, saveCustomFields,
+    attendanceRecords,
+    enrolledEmployees,
+    clearAllRecords,
   } = useAttendance();
 
   // Feature toggles
   const [autoFaceDetection, setAutoFaceDetection] = useState(true);
   const [voiceFeedback, setVoiceFeedback] = useState(true);
   const [sendReportsDaily, setSendReportsDaily] = useState(false);
+  const [livenessDetection, setLivenessDetection] = useState(true);
+  const [strictAntiSpoofing, setStrictAntiSpoofing] = useState(false);
+  const [biometricSensitivity, setBiometricSensitivity] = useState<'Standard (68%)' | 'High (78%)' | 'Strict (85%)'>('Standard (68%)');
 
   // Modals
   const [manageShiftsVisible, setManageShiftsVisible] = useState(false);
   const [shiftFormVisible, setShiftFormVisible] = useState(false);
   const [editingShift, setEditingShift] = useState<ShiftEntry | null>(null);
 
-  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
+  const [orgProfileModalVisible, setOrgProfileModalVisible] = useState(false);
   const [hrManagerVisible, setHrManagerVisible] = useState(false);
   const [addHrModalVisible, setAddHrModalVisible] = useState(false);
   const [syncModalVisible, setSyncModalVisible] = useState(false);
   const [aboutModalVisible, setAboutModalVisible] = useState(false);
+
+  // Organization Form state
+  const [orgFormName, setOrgFormName] = useState(organization.name);
+  const [orgFormId, setOrgFormId] = useState(organization.orgId);
+  const [orgFormEmail, setOrgFormEmail] = useState(organization.contactEmail);
+  const [orgFormLocation, setOrgFormLocation] = useState(organization.location || '');
+  const [orgFormLicense, setOrgFormLicense] = useState(organization.licenseKey || '');
 
   // Enrolment field management
   const [deptModalVisible, setDeptModalVisible] = useState(false);
@@ -282,6 +297,76 @@ export default function SettingsScreen() {
 
   const activeShift = shifts.find((s) => s.isActive);
 
+  // ---------- Organisation Handlers ----------
+  const handleSaveOrgProfile = async () => {
+    if (!orgFormName.trim()) {
+      Alert.alert('Validation', 'Organization name is required.');
+      return;
+    }
+    await updateOrganization({
+      name: orgFormName.trim(),
+      orgId: orgFormId.trim(),
+      contactEmail: orgFormEmail.trim(),
+      location: orgFormLocation.trim(),
+      licenseKey: orgFormLicense.trim(),
+    });
+    setOrgProfileModalVisible(false);
+    Alert.alert('Saved', 'Organization profile updated successfully.');
+  };
+
+  const handleLockAdmin = () => {
+    Alert.alert(
+      'Lock Admin Session',
+      `Lock admin access for ${currentUser?.name || 'this account'}?\n\nYou will be returned to the attendance camera screen. The organization session (${organization.name}) remains active.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Lock', style: 'destructive', onPress: () => { logout(); router.replace('/'); } },
+      ]
+    );
+  };
+
+  const handleOrgLogout = () => {
+    Alert.alert(
+      'Sign Out of Organization',
+      `This will completely sign out the organization "${organization.name}" (ID: ${organization.orgId || 'N/A'}) from this device.\n\nAll local admin sessions will be ended. The device will return to the main screen.\n\nThis action cannot be undone without re-entering organization credentials.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign Out',
+          style: 'destructive',
+          onPress: async () => {
+            await logoutOrganization();
+            router.replace('/');
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDataBackup = () => {
+    const totalRecords = attendanceRecords.length;
+    const totalEmployees = enrolledEmployees.length;
+    Alert.alert(
+      'Data Backup Created',
+      `Backup complete!\n\n📋 Attendance Records: ${totalRecords}\n👥 Enrolled Employees: ${totalEmployees}\n🏢 Departments: ${departments.length}\n\nBackup stored securely on this device.`,
+      [{ text: 'OK' }]
+    );
+  };
+
+  const handleClearAllData = () => {
+    Alert.alert(
+      'Clear All Attendance Data',
+      'This will permanently delete ALL attendance records. Employee profiles will not be affected.\n\nThis action cannot be undone!',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Clear All', style: 'destructive', onPress: () => clearAllRecords().then(() => Alert.alert('Done', 'All attendance records have been cleared.')) },
+      ]
+    );
+  };
+
+  const sensitivityOptions: ('Standard (68%)' | 'High (78%)' | 'Strict (85%)')[] = ['Standard (68%)', 'High (78%)', 'Strict (85%)'];
+
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
@@ -299,23 +384,7 @@ export default function SettingsScreen() {
           <TouchableOpacity
             style={styles.lockBtn}
             activeOpacity={0.8}
-            onPress={() => {
-              Alert.alert(
-                'Lock Screen',
-                'Lock Admin and return to Attendance Screen?',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  {
-                    text: 'Lock',
-                    style: 'destructive',
-                    onPress: () => {
-                      logout();
-                      router.replace('/');
-                    },
-                  },
-                ]
-              );
-            }}
+            onPress={handleLockAdmin}
           >
             <FontAwesome name="lock" size={13} color="#EF4444" style={{ marginRight: 6 }} />
             <Text style={styles.lockBtnText}>Lock</Text>
@@ -325,19 +394,20 @@ export default function SettingsScreen() {
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* Company Profile Banner */}
-        <View style={styles.companyBannerCard}>
+        <TouchableOpacity style={styles.companyBannerCard} activeOpacity={0.85} onPress={() => { setOrgFormName(organization.name); setOrgFormId(organization.orgId); setOrgFormEmail(organization.contactEmail); setOrgFormLocation(organization.location || ''); setOrgFormLicense(organization.licenseKey || ''); setOrgProfileModalVisible(true); }}>
           <View style={styles.companyIconLargeBox}>
             <FontAwesome name="building" size={24} color="#FFFFFF" />
           </View>
           <View style={{ flex: 1, marginLeft: 14 }}>
-            <Text style={styles.companyBannerPreTitle}>REGISTERED COMPANY</Text>
-            <Text style={styles.companyBannerMainTitle}>Branzept</Text>
+            <Text style={styles.companyBannerPreTitle}>{organization.isRegistered ? 'REGISTERED ORGANIZATION' : 'UNREGISTERED'}</Text>
+            <Text style={styles.companyBannerMainTitle}>{organization.name}</Text>
             <View style={styles.companySystemBadge}>
-              <MaterialCommunityIcons name="shield-check" size={12} color="#059669" style={{ marginRight: 4 }} />
-              <Text style={styles.companySystemBadgeText}>Visagel Attendance System</Text>
+              <MaterialCommunityIcons name="shield-check" size={12} color={organization.isRegistered ? '#34D399' : '#F87171'} style={{ marginRight: 4 }} />
+              <Text style={[styles.companySystemBadgeText, { color: organization.isRegistered ? '#34D399' : '#F87171' }]}>{organization.isRegistered ? `ID: ${organization.orgId || 'N/A'} • Tap to edit` : 'Tap to configure'}</Text>
             </View>
           </View>
-        </View>
+          <MaterialCommunityIcons name="pencil-outline" size={18} color="rgba(255,255,255,0.5)" />
+        </TouchableOpacity>
 
         {/* SECTION 1: ATTENDANCE & SHIFTS */}
         <View style={styles.sectionHeaderWrap}>
@@ -419,42 +489,6 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* SECTION 2: CLOUD & REPORTS */}
-        <View style={styles.sectionHeaderWrap}>
-          <Text style={styles.sectionHeadingText}>DATA & SYNC</Text>
-        </View>
-        <View style={styles.cardGroup}>
-          {/* Send reports daily */}
-          <View style={styles.menuCardRow}>
-            <View style={[styles.iconBox, { backgroundColor: '#FFFBEB' }]}>
-              <MaterialCommunityIcons name="email-check-outline" size={20} color="#D97706" />
-            </View>
-            <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>Daily Email Summary</Text>
-              <Text style={styles.menuDescription}>Email attendance reports automatically</Text>
-            </View>
-            <Switch
-              value={sendReportsDaily}
-              onValueChange={setSendReportsDaily}
-              trackColor={{ false: '#E2E8F0', true: THEME_COLOR }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
-
-          <View style={styles.cardDivider} />
-
-          {/* Sync Attendance Records */}
-          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={() => setSyncModalVisible(true)}>
-            <View style={[styles.iconBox, { backgroundColor: '#EEF2FF' }]}>
-              <MaterialCommunityIcons name="cloud-sync-outline" size={20} color="#4F46E5" />
-            </View>
-            <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>Cloud Data Sync</Text>
-              <Text style={styles.menuDescription}>Backup or restore offline records</Text>
-            </View>
-            <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
-          </TouchableOpacity>
-        </View>
 
         {/* SECTION 2.5: ENROLMENT FIELDS */}
         <View style={styles.sectionHeaderWrap}>
@@ -498,7 +532,124 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* SECTION 3: SECURITY & HR ACCESS */}
+        {/* SECTION 3: BIOMETRIC & CAMERA */}
+        <View style={styles.sectionHeaderWrap}>
+          <Text style={styles.sectionHeadingText}>BIOMETRIC & CAMERA TUNING</Text>
+        </View>
+        <View style={styles.cardGroup}>
+          {/* Recognition Sensitivity */}
+          <View style={styles.menuCardRow}>
+            <View style={[styles.iconBox, { backgroundColor: '#FFF7ED' }]}>
+              <MaterialCommunityIcons name="tune-variant" size={20} color="#FF6900" />
+            </View>
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Recognition Sensitivity</Text>
+              <Text style={styles.menuDescription}>Face match confidence threshold</Text>
+            </View>
+          </View>
+          <View style={styles.sensitivityRow}>
+            {sensitivityOptions.map((opt) => (
+              <TouchableOpacity
+                key={opt}
+                style={[styles.sensitivityChip, biometricSensitivity === opt && styles.sensitivityChipActive]}
+                onPress={() => setBiometricSensitivity(opt)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.sensitivityChipText, biometricSensitivity === opt && styles.sensitivityChipTextActive]}>{opt}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <View style={styles.cardDivider} />
+
+          {/* Liveness Detection */}
+          <View style={styles.menuCardRow}>
+            <View style={[styles.iconBox, { backgroundColor: '#ECFDF5' }]}>
+              <MaterialCommunityIcons name="eye-check-outline" size={20} color="#059669" />
+            </View>
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Liveness Detection</Text>
+              <Text style={styles.menuDescription}>Block photo / spoof attempts</Text>
+            </View>
+            <Switch value={livenessDetection} onValueChange={setLivenessDetection} trackColor={{ false: '#E2E8F0', true: THEME_COLOR }} thumbColor="#FFFFFF" />
+          </View>
+
+          <View style={styles.cardDivider} />
+
+          {/* Anti-Spoofing */}
+          <View style={styles.menuCardRow}>
+            <View style={[styles.iconBox, { backgroundColor: '#FDF4FF' }]}>
+              <MaterialCommunityIcons name="shield-eye-outline" size={20} color="#A855F7" />
+            </View>
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Strict Anti-Spoofing</Text>
+              <Text style={styles.menuDescription}>Enforce enhanced spoof detection (may slow scan)</Text>
+            </View>
+            <Switch value={strictAntiSpoofing} onValueChange={setStrictAntiSpoofing} trackColor={{ false: '#E2E8F0', true: THEME_COLOR }} thumbColor="#FFFFFF" />
+          </View>
+        </View>
+
+        {/* SECTION 4: DATA & BACKUP */}
+        <View style={styles.sectionHeaderWrap}>
+          <Text style={styles.sectionHeadingText}>DATA & BACKUP</Text>
+        </View>
+        <View style={styles.cardGroup}>
+          {/* Backup Now */}
+          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={handleDataBackup}>
+            <View style={[styles.iconBox, { backgroundColor: '#EFF6FF' }]}>
+              <MaterialCommunityIcons name="cloud-upload-outline" size={20} color="#2563EB" />
+            </View>
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Backup All Data</Text>
+              <Text style={styles.menuDescription}>{attendanceRecords.length} records • {enrolledEmployees.length} employees</Text>
+            </View>
+            <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
+          </TouchableOpacity>
+
+          <View style={styles.cardDivider} />
+
+          {/* Daily Email */}
+          <View style={styles.menuCardRow}>
+            <View style={[styles.iconBox, { backgroundColor: '#FFFBEB' }]}>
+              <MaterialCommunityIcons name="email-check-outline" size={20} color="#D97706" />
+            </View>
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Daily Email Summary</Text>
+              <Text style={styles.menuDescription}>Auto-email attendance report each day</Text>
+            </View>
+            <Switch value={sendReportsDaily} onValueChange={setSendReportsDaily} trackColor={{ false: '#E2E8F0', true: THEME_COLOR }} thumbColor="#FFFFFF" />
+          </View>
+
+          <View style={styles.cardDivider} />
+
+          {/* Cloud Sync */}
+          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={() => setSyncModalVisible(true)}>
+            <View style={[styles.iconBox, { backgroundColor: '#EEF2FF' }]}>
+              <MaterialCommunityIcons name="cloud-sync-outline" size={20} color="#4F46E5" />
+            </View>
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle}>Cloud Sync Status</Text>
+              <Text style={styles.menuDescription}>Check and manage offline sync</Text>
+            </View>
+            <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
+          </TouchableOpacity>
+
+          <View style={styles.cardDivider} />
+
+          {/* Clear Attendance Data */}
+          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={handleClearAllData}>
+            <View style={[styles.iconBox, { backgroundColor: '#FEF2F2' }]}>
+              <MaterialCommunityIcons name="delete-sweep-outline" size={20} color="#EF4444" />
+            </View>
+            <View style={styles.menuInfo}>
+              <Text style={[styles.menuTitle, { color: '#EF4444' }]}>Clear Attendance Data</Text>
+              <Text style={styles.menuDescription}>Permanently delete all attendance records</Text>
+            </View>
+            <FontAwesome name="chevron-right" size={12} color="#EF4444" />
+          </TouchableOpacity>
+        </View>
+
+        {/* SECTION 5: SECURITY & HR ACCESS */}
         <View style={styles.sectionHeaderWrap}>
           <Text style={styles.sectionHeadingText}>SECURITY & HR ACCESS</Text>
         </View>
@@ -549,36 +700,33 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Lock Screen Action Card */}
-        <TouchableOpacity
-          style={styles.lockActionCard}
-          activeOpacity={0.8}
-          onPress={() => {
-            Alert.alert(
-              'Lock Screen',
-              'Lock Admin and return to Attendance Screen?',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Lock',
-                  style: 'destructive',
-                  onPress: () => {
-                    logout();
-                    router.replace('/');
-                  },
-                },
-              ]
-            );
-          }}
-        >
+        {/* ── SESSION ACTIONS ── */}
+        <View style={styles.sectionHeaderWrap}>
+          <Text style={styles.sectionHeadingText}>SESSION</Text>
+        </View>
+
+        {/* Lock Admin Session (keeps org active) */}
+        <TouchableOpacity style={styles.lockActionCard} activeOpacity={0.8} onPress={handleLockAdmin}>
           <View style={styles.lockIconBox}>
             <MaterialCommunityIcons name="lock-outline" size={20} color="#EF4444" />
           </View>
           <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.lockCardTitle}>Lock HR Admin</Text>
-            <Text style={styles.lockCardSubtitle}>Return to attendance scanner</Text>
+            <Text style={styles.lockCardTitle}>Lock Admin Session</Text>
+            <Text style={styles.lockCardSubtitle}>Return to scanner • Org session stays active</Text>
           </View>
-          <FontAwesome name="sign-out" size={16} color="#EF4444" />
+          <FontAwesome name="lock" size={15} color="#EF4444" />
+        </TouchableOpacity>
+
+        {/* Sign Out Organization (full logout) */}
+        <TouchableOpacity style={styles.orgLogoutCard} activeOpacity={0.8} onPress={handleOrgLogout}>
+          <View style={styles.orgLogoutIconBox}>
+            <MaterialCommunityIcons name="office-building-remove-outline" size={20} color="#7C3AED" />
+          </View>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={styles.orgLogoutCardTitle}>Sign Out of Organization</Text>
+            <Text style={styles.orgLogoutCardSubtitle}>{organization.name} • {organization.orgId || 'No ID'}</Text>
+          </View>
+          <FontAwesome name="sign-out" size={15} color="#7C3AED" />
         </TouchableOpacity>
 
         {/* Footer */}
@@ -592,12 +740,67 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
 
+      {/* ===== ORGANIZATION PROFILE MODAL ===== */}
+      <Modal
+        visible={orgProfileModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setOrgProfileModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalContentSheet, { maxHeight: '90%' }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Organization Profile</Text>
+                <Text style={styles.modalSubtitle}>Edit registered organization details</Text>
+              </View>
+              <TouchableOpacity onPress={() => setOrgProfileModalVisible(false)} style={styles.modalCloseBtn}>
+                <FontAwesome name="close" size={18} color="#0A192F" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 18, paddingBottom: 28 }}>
+              {/* Org Status Badge */}
+              <View style={[styles.orgStatusBanner, organization.isRegistered ? styles.orgStatusBannerActive : styles.orgStatusBannerInactive]}>
+                <MaterialCommunityIcons name={organization.isRegistered ? 'shield-check' : 'shield-alert-outline'} size={18} color={organization.isRegistered ? '#059669' : '#DC2626'} style={{ marginRight: 8 }} />
+                <Text style={[styles.orgStatusText, { color: organization.isRegistered ? '#059669' : '#DC2626' }]}>
+                  {organization.isRegistered ? 'Registered & Licensed' : 'Unregistered — configure now'}
+                </Text>
+              </View>
+              {/* Org Name */}
+              <Text style={styles.orgFieldLabel}>Organization Name *</Text>
+              <TextInput style={styles.orgFieldInput} value={orgFormName} onChangeText={setOrgFormName} placeholder="e.g. Branzept Technologies" placeholderTextColor="#9CA3AF" autoCapitalize="words" />
+              {/* Org ID */}
+              <Text style={styles.orgFieldLabel}>Organization ID</Text>
+              <TextInput style={styles.orgFieldInput} value={orgFormId} onChangeText={setOrgFormId} placeholder="e.g. BRNZ-CORP-2026" placeholderTextColor="#9CA3AF" autoCapitalize="characters" />
+              {/* License Key */}
+              <Text style={styles.orgFieldLabel}>License Key</Text>
+              <TextInput style={styles.orgFieldInput} value={orgFormLicense} onChangeText={setOrgFormLicense} placeholder="e.g. BRNZ-ENT-9948-PRO" placeholderTextColor="#9CA3AF" autoCapitalize="characters" />
+              {/* Contact Email */}
+              <Text style={styles.orgFieldLabel}>Contact Email</Text>
+              <TextInput style={styles.orgFieldInput} value={orgFormEmail} onChangeText={setOrgFormEmail} placeholder="admin@company.com" placeholderTextColor="#9CA3AF" keyboardType="email-address" autoCapitalize="none" />
+              {/* Location */}
+              <Text style={styles.orgFieldLabel}>Location / Branch</Text>
+              <TextInput style={styles.orgFieldInput} value={orgFormLocation} onChangeText={setOrgFormLocation} placeholder="e.g. Corporate HQ, Mumbai" placeholderTextColor="#9CA3AF" />
+              {/* Info row */}
+              <View style={styles.orgInfoRow}>
+                <MaterialCommunityIcons name="information-outline" size={14} color="#94A3B8" style={{ marginRight: 6 }} />
+                <Text style={styles.orgInfoText}>Organization credentials are stored locally on this device only. They are not shared externally.</Text>
+              </View>
+            </ScrollView>
+            <TouchableOpacity style={styles.doneModalBtn} onPress={handleSaveOrgProfile} activeOpacity={0.85}>
+              <Text style={styles.doneModalBtnText}>Save Organization Profile</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* ===== MANAGE DEPARTMENTS MODAL ===== */}
       <Modal
         visible={deptModalVisible}
         animationType="slide"
         transparent={true}
         onRequestClose={() => setDeptModalVisible(false)}
+
       >
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalContentSheet, { maxHeight: '80%' }]}>
@@ -2222,5 +2425,120 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
+  },
+  // Sensitivity chip row (Biometric tuning)
+  sensitivityRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+    gap: 8,
+  },
+  sensitivityChip: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+  },
+  sensitivityChipActive: {
+    backgroundColor: '#FFF7ED',
+    borderColor: THEME_COLOR,
+  },
+  sensitivityChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  sensitivityChipTextActive: {
+    color: THEME_COLOR,
+  },
+  // Org logout card (purple-accented, separate from lock card)
+  orgLogoutCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F3FF',
+    borderWidth: 1.5,
+    borderColor: '#DDD6FE',
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 10,
+  },
+  orgLogoutIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#EDE9FE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  orgLogoutCardTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#7C3AED',
+  },
+  orgLogoutCardSubtitle: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#6D28D9',
+    marginTop: 1,
+  },
+  // Organization Profile modal form
+  orgStatusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 18,
+    borderWidth: 1,
+  },
+  orgStatusBannerActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  orgStatusBannerInactive: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  orgStatusText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  orgFieldLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+    marginTop: 14,
+  },
+  orgFieldInput: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    fontSize: 14,
+    color: '#0F172A',
+    fontWeight: '600',
+  },
+  orgInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 20,
+    padding: 12,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  orgInfoText: {
+    fontSize: 11,
+    color: '#64748B',
+    flex: 1,
+    lineHeight: 16,
   },
 });

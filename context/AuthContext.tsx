@@ -1,6 +1,15 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
 
+export interface OrganizationInfo {
+  name: string;
+  orgId: string;
+  contactEmail: string;
+  location?: string;
+  licenseKey?: string;
+  isRegistered: boolean;
+}
+
 export interface AdminAccount {
   id: string;
   name: string;
@@ -15,15 +24,29 @@ interface AuthContextType {
   isAuthenticated: boolean;
   currentUser: AdminAccount | null;
   adminAccounts: AdminAccount[];
+  organization: OrganizationInfo;
+  updateOrganization: (updates: Partial<OrganizationInfo>) => Promise<void>;
   verifyPassword: (password: string, loginId?: string) => { success: boolean; user?: AdminAccount };
   updatePassword: (newPassword: string) => Promise<boolean>;
   addAdminAccount: (account: Omit<AdminAccount, 'id' | 'createdAt'>) => Promise<boolean>;
   removeAdminAccount: (id: string) => Promise<boolean>;
   updateAdminAccount: (id: string, updates: Partial<AdminAccount>) => Promise<boolean>;
   logout: () => void;
+  logoutOrganization: () => Promise<void>;
 }
 
 const PASSWORD_FILE = `${FileSystem.documentDirectory || FileSystem.cacheDirectory || ''}visagel_admin_auth.json`;
+const ORG_FILE = `${FileSystem.documentDirectory || FileSystem.cacheDirectory || ''}visagel_org_profile.json`;
+
+const DEFAULT_ORG: OrganizationInfo = {
+  name: 'Branzept',
+  orgId: 'BRNZ-CORP-2026',
+  contactEmail: 'admin@branzept.com',
+  location: 'Corporate HQ',
+  licenseKey: 'BRNZ-ENT-9948-PRO',
+  isRegistered: true,
+};
+
 const DEFAULT_ADMIN: AdminAccount = {
   id: 'admin-root',
   name: 'Default Admin',
@@ -38,18 +61,22 @@ const AuthContext = createContext<AuthContextType>({
   isAuthenticated: false,
   currentUser: null,
   adminAccounts: [DEFAULT_ADMIN],
+  organization: DEFAULT_ORG,
+  updateOrganization: async () => {},
   verifyPassword: () => ({ success: false }),
   updatePassword: async () => false,
   addAdminAccount: async () => false,
   removeAdminAccount: async () => false,
   updateAdminAccount: async () => false,
   logout: () => {},
+  logoutOrganization: async () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [adminAccounts, setAdminAccounts] = useState<AdminAccount[]>([DEFAULT_ADMIN]);
   const [currentUser, setCurrentUser] = useState<AdminAccount | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [organization, setOrganization] = useState<OrganizationInfo>(DEFAULT_ORG);
 
   useEffect(() => {
     (async () => {
@@ -62,7 +89,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (Array.isArray(data?.accounts) && data.accounts.length > 0) {
               setAdminAccounts(data.accounts);
             } else if (data?.adminPassword) {
-              // Backward compatibility migration
               const singleAcc: AdminAccount = {
                 id: 'admin-root',
                 name: 'Main Admin',
@@ -75,11 +101,63 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           }
         }
+        if (ORG_FILE) {
+          const orgInfo = await FileSystem.getInfoAsync(ORG_FILE);
+          if (orgInfo.exists) {
+            const orgContent = await FileSystem.readAsStringAsync(ORG_FILE);
+            const orgData = JSON.parse(orgContent);
+            if (orgData?.name) {
+              setOrganization((prev) => ({ ...prev, ...orgData }));
+            }
+          }
+        }
       } catch (e) {
-        console.warn('Failed to load stored admin accounts', e);
+        console.warn('Failed to load stored auth/org data', e);
       }
     })();
   }, []);
+
+  const updateOrganization = async (updates: Partial<OrganizationInfo>) => {
+    const updated = { ...organization, ...updates };
+    setOrganization(updated);
+    try {
+      if (ORG_FILE) {
+        await FileSystem.writeAsStringAsync(
+          ORG_FILE,
+          JSON.stringify(updated),
+          { encoding: 'utf8' }
+        );
+      }
+    } catch (e) {
+      console.warn('Failed to persist organization info', e);
+    }
+  };
+
+  const logoutOrganization = async () => {
+    // Reset to default de-registered organization and clear session
+    const deRegistered: OrganizationInfo = {
+      name: 'Unregistered Company',
+      orgId: '',
+      contactEmail: '',
+      location: '',
+      licenseKey: '',
+      isRegistered: false,
+    };
+    setOrganization(deRegistered);
+    setIsAuthenticated(false);
+    setCurrentUser(null);
+    try {
+      if (ORG_FILE) {
+        await FileSystem.writeAsStringAsync(
+          ORG_FILE,
+          JSON.stringify(deRegistered),
+          { encoding: 'utf8' }
+        );
+      }
+    } catch (e) {
+      console.warn('Failed to deregister organization', e);
+    }
+  };
 
   const persistAccounts = async (accounts: AdminAccount[]) => {
     setAdminAccounts(accounts);
@@ -176,12 +254,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAuthenticated,
         currentUser,
         adminAccounts,
+        organization,
+        updateOrganization,
         verifyPassword,
         updatePassword,
         addAdminAccount,
         removeAdminAccount,
         updateAdminAccount,
         logout,
+        logoutOrganization,
       }}
     >
       {children}

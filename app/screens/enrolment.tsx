@@ -121,10 +121,14 @@ export default function EnrolmentScreen() {
   }, [permission, requestPermission]);
 
   const toggleFolder = (folderDept: string) => {
-    setCollapsedFolders((prev) => ({
-      ...prev,
-      [folderDept]: !prev[folderDept],
-    }));
+    setCollapsedFolders((prev) => {
+      // If undefined, it was closed by default (true), so toggling makes it open (false)
+      const currentCollapsed = prev[folderDept] !== undefined ? prev[folderDept] : true;
+      return {
+        ...prev,
+        [folderDept]: !currentCollapsed,
+      };
+    });
   };
 
   const handleInputChange = (field: string, value: string) => {
@@ -519,7 +523,8 @@ export default function EnrolmentScreen() {
                 // If searching and this folder has 0 matching employees, skip
                 if (searchQuery.trim() && empsInDept.length === 0) return null;
 
-                const isCollapsed = Boolean(collapsedFolders[deptName]);
+                // If not explicitly set in collapsedFolders, default state is CLOSED (true)
+                const isCollapsed = collapsedFolders[deptName] !== undefined ? collapsedFolders[deptName] : true;
                 const dMeta = getDepartmentMeta(deptName);
                 const faceEnrolledCount = empsInDept.filter((e) => Boolean(e.photoUri)).length;
                 const percent = empsInDept.length > 0 ? Math.round((faceEnrolledCount / empsInDept.length) * 100) : 0;
