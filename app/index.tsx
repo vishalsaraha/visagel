@@ -232,7 +232,11 @@ export default function AttendanceScreen() {
 
       // Match face against enrolled pool
       const photoUris = pool.map((e) => e.photoUri as string);
-      const { index, confidence, isCovered } = await findBestMatch(liveShotUri, photoUris);
+      const { index, confidence, isCovered, hasFace, livenessPassed, rejectionReason } = await findBestMatch(
+        liveShotUri,
+        photoUris,
+        { requireLiveness: true, strictAntiSpoofing: false }
+      );
 
       if (!isAuto) {
         Animated.timing(progressAnim, {
@@ -245,14 +249,15 @@ export default function AttendanceScreen() {
       }
 
       // Check if match threshold met
-      if (index === -1 || confidence < MIN_CONFIDENCE || isCovered) {
+      if (index === -1 || confidence < MIN_CONFIDENCE || isCovered || !hasFace || !livenessPassed) {
         if (!isAuto) {
           setScanPhase('failed');
-          setStatusMessage(
-            isCovered
-              ? 'Camera covered or too dark'
-              : `No face match (${confidence}%) — Try again`
-          );
+          let failMessage = `No face match (${confidence}%) — Try again`;
+          if (isCovered) failMessage = 'Camera covered or too dark';
+          else if (!hasFace) failMessage = 'No face detected — Look at camera';
+          else if (!livenessPassed && rejectionReason) failMessage = rejectionReason;
+
+          setStatusMessage(failMessage);
           try {
             await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
           } catch (_) {}
@@ -262,7 +267,7 @@ export default function AttendanceScreen() {
             setFaceConfidence(0);
             setStatusMessage(autoAttendance ? 'Auto-scanning for faces...' : 'Face scanner ready');
             isScanningRef.current = false;
-          }, 2000);
+          }, 2200);
         } else {
           // In auto mode, quietly ignore low confidence / non-faces and schedule next scan
           isScanningRef.current = false;

@@ -24,6 +24,7 @@ import * as Sharing from 'expo-sharing';
 import * as MailComposer from 'expo-mail-composer';
 import AppDateTimePicker from '@/components/AppDateTimePicker';
 import AppAlertModal from '@/components/AppAlertModal';
+import { detectFaces } from '@/utils/faceMatch';
 
 const THEME_COLOR = '#FF6900';
 const THEME_COLOR_10_OPACITY = 'rgba(255, 105, 0, 0.1)';
@@ -140,6 +141,12 @@ export default function EnrolmentScreen() {
       try {
         const photo = await cameraRef.current.takePictureAsync({ quality: 0.5 });
         if (photo && photo.uri) {
+          // Validate face presence using Google ML Kit
+          const mlResult = await detectFaces(photo.uri);
+          if (!mlResult.hasFace || mlResult.faces.length === 0) {
+            showAlert('No Face Detected', 'Google ML Kit could not detect a clear face in this photo. Please position the face clearly inside the frame and retake.');
+            return;
+          }
           setCapturedPhoto(photo.uri);
           setCameraVisible(false);
         }

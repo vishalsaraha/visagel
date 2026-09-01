@@ -1,0 +1,10 @@
+{
+  "name": "expo-mlkit-face-detector",
+  "platforms": ["android", "ios", "web"],
+  "android": {
+    "modules": ["expo.modules.mlkitfacedetector.ExpoMlkitFaceDetectorModule"]
+  },
+  "ios": {
+    "modules": ["ExpoMlkitFaceDetectorModule"]
+  }
+}

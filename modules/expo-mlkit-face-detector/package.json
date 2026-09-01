@@ -1,0 +1,20 @@
+{
+  "name": "expo-mlkit-face-detector",
+  "version": "1.0.0",
+  "description": "Google ML Kit Face Detection module for Expo React Native",
+  "main": "index.ts",
+  "types": "index.ts",
+  "scripts": {},
+  "keywords": [
+    "expo",
+    "expo-module",
+    "mlkit",
+    "face-detection",
+    "google-mlkit"
+  ],
+  "author": "Branzept",
+  "license": "MIT",
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

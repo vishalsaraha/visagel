@@ -1,0 +1,58 @@
+buildscript {
+  repositories {
+    google()
+    mavenCentral()
+  }
+
+  dependencies {
+    classpath("com.android.tools.build:gradle:8.5.2")
+    classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21")
+  }
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}
+
+group = 'expo.modules.mlkitfacedetector'
+version = '1.0.0'
+
+android {
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+  namespace "expo.modules.mlkitfacedetector"
+
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+    versionCode 1
+    versionName "1.0.0"
+  }
+
+  lintOptions {
+    abortOnError false
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = "17"
+  }
+}
+
+repositories {
+  google()
+  mavenCentral()
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+
+  // Google ML Kit Face Detection
+  implementation 'com.google.mlkit:face-detection:16.1.7'
+}
