@@ -15,9 +15,10 @@ interface AuthPasswordModalProps {
   visible: boolean;
   onClose: () => void;
   onSuccess: () => void;
-  verifyPassword: (password: string, loginId?: string) => { success: boolean; user?: AdminAccount };
+  verifyPassword: (password: string, loginOrEmail?: string) => { success: boolean; user?: AdminAccount };
   title?: string;
   subtitle?: string;
+  badgeText?: string;
 }
 
 const THEME_COLOR = '#FF6900';
@@ -27,17 +28,18 @@ export default function AuthPasswordModal({
   onClose,
   onSuccess,
   verifyPassword,
-  title = 'HR Login',
-  subtitle = 'Enter credentials to manage system',
+  title = 'HR Admin Login',
+  subtitle = 'Enter HR ID & Password to unlock',
+  badgeText = 'HR ACCESS LOCK',
 }: AuthPasswordModalProps) {
-  const [loginId, setLoginId] = useState<string>('');
+  const [loginIdOrEmail, setLoginIdOrEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
   useEffect(() => {
     if (visible) {
-      setLoginId('');
+      setLoginIdOrEmail('');
       setPassword('');
       setErrorMessage('');
       setShowPassword(false);
@@ -50,15 +52,15 @@ export default function AuthPasswordModal({
       return;
     }
 
-    const res = verifyPassword(password, loginId.trim() ? loginId : undefined);
+    const res = verifyPassword(password, loginIdOrEmail.trim() ? loginIdOrEmail.trim() : undefined);
     if (res.success) {
       setPassword('');
-      setLoginId('');
+      setLoginIdOrEmail('');
       setErrorMessage('');
       onSuccess();
     } else {
       Vibration.vibrate(100);
-      setErrorMessage('Incorrect ID or Password');
+      setErrorMessage('Incorrect HR ID or Password');
       setPassword('');
     }
   };
@@ -82,7 +84,13 @@ export default function AuthPasswordModal({
             <FontAwesome name="close" size={16} color="#64748B" />
           </TouchableOpacity>
 
-          {/* Security Badge Icon */}
+          {/* HR Access Badge */}
+          <View style={styles.badgePill}>
+            <MaterialCommunityIcons name="shield-lock" size={12} color={THEME_COLOR} style={{ marginRight: 4 }} />
+            <Text style={styles.badgePillText}>{badgeText}</Text>
+          </View>
+
+          {/* HR Shield Icon */}
           <View style={styles.iconCircle}>
             <MaterialCommunityIcons name="shield-lock-outline" size={28} color={THEME_COLOR} />
           </View>
@@ -91,16 +99,16 @@ export default function AuthPasswordModal({
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.subtitle}>{subtitle}</Text>
 
-          {/* HR Login ID Input Box */}
+          {/* HR ID or Email Input Box */}
           <View style={styles.inputWrapper}>
             <MaterialCommunityIcons name="account-tie-outline" size={18} color="#94A3B8" style={{ marginRight: 8 }} />
             <TextInput
               style={styles.input}
-              placeholder="Admin ID (optional)"
+              placeholder="HR Login ID or Email"
               placeholderTextColor="#94A3B8"
-              value={loginId}
+              value={loginIdOrEmail}
               onChangeText={(text) => {
-                setLoginId(text);
+                setLoginIdOrEmail(text);
                 setErrorMessage('');
               }}
               autoCapitalize="none"
@@ -156,14 +164,14 @@ export default function AuthPasswordModal({
               onPress={onClose}
               activeOpacity={0.7}
             >
-              <Text style={styles.cancelBtnText}>Cancel</Text>
+              <Text style={styles.cancelBtnText} numberOfLines={1}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionBtn, styles.submitBtn]}
               onPress={handleLogin}
               activeOpacity={0.85}
             >
-              <Text style={styles.submitBtnText}>Unlock</Text>
+              <Text style={styles.submitBtnText} numberOfLines={1} adjustsFontSizeToFit>Unlock Console</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -175,17 +183,17 @@ export default function AuthPasswordModal({
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(10, 25, 47, 0.7)',
+    backgroundColor: 'rgba(10, 25, 47, 0.75)',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,
   },
   modalCard: {
     width: '100%',
-    maxWidth: 340,
+    maxWidth: 350,
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
-    paddingTop: 24,
+    paddingTop: 22,
     paddingBottom: 20,
     paddingHorizontal: 20,
     alignItems: 'center',
@@ -210,17 +218,35 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 2,
+  },
+  badgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    marginBottom: 12,
+  },
+  badgePillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: THEME_COLOR,
+    letterSpacing: 0.8,
   },
   iconCircle: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: '#FFF7ED',
     borderWidth: 2,
     borderColor: '#FFEDD5',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
   },
   title: {
     fontSize: 18,
@@ -234,6 +260,7 @@ const styles = StyleSheet.create({
     color: '#64748B',
     textAlign: 'center',
     marginBottom: 16,
+    paddingHorizontal: 8,
   },
   inputWrapper: {
     width: '100%',
@@ -252,7 +279,7 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
     color: '#0F172A',
     paddingVertical: 0,

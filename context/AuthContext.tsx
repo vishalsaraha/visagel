@@ -8,6 +8,8 @@ export interface AdminAccount {
   password: string;
   role: 'SUPER_ADMIN' | 'HR_MANAGER' | 'HR_STAFF';
   createdAt: string;
+  companyEmail?: string;
+  companyName?: string;
 }
 
 interface AuthContextType {
@@ -31,6 +33,8 @@ const DEFAULT_ADMIN: AdminAccount = {
   password: 'admin',
   role: 'SUPER_ADMIN',
   createdAt: new Date().toISOString(),
+  companyEmail: 'admin@company.com',
+  companyName: 'Visagel Enterprise',
 };
 
 const AuthContext = createContext<AuthContextType>({
@@ -66,15 +70,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     saveAdminAccountsDb(accounts);
   };
 
-  const verifyPassword = (password: string, loginId?: string): { success: boolean; user?: AdminAccount } => {
+  const verifyPassword = (password: string, loginOrEmail?: string): { success: boolean; user?: AdminAccount } => {
     const trimmedPass = password.trim();
-    const trimmedId = loginId?.trim().toLowerCase();
+    const trimmedId = loginOrEmail?.trim().toLowerCase();
 
-    // Check if matching specific ID + Password, or any account where password matches
+    // Check if matching specific Login ID or Company Email + Password, or any account where password matches
     let matched: AdminAccount | undefined;
     if (trimmedId) {
       matched = adminAccounts.find(
-        (a) => a.loginId.toLowerCase() === trimmedId && a.password === trimmedPass
+        (a) =>
+          (a.loginId.toLowerCase() === trimmedId ||
+            (a.companyEmail && a.companyEmail.toLowerCase() === trimmedId)) &&
+          a.password === trimmedPass
       );
     } else {
       matched = adminAccounts.find((a) => a.password === trimmedPass);
@@ -103,7 +110,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const addAdminAccount = async (account: Omit<AdminAccount, 'id' | 'createdAt'>): Promise<boolean> => {
     const exists = adminAccounts.some(
-      (a) => a.loginId.toLowerCase() === account.loginId.trim().toLowerCase()
+      (a) =>
+        a.loginId.toLowerCase() === account.loginId.trim().toLowerCase() ||
+        (account.companyEmail && a.companyEmail && a.companyEmail.toLowerCase() === account.companyEmail.trim().toLowerCase())
     );
     if (exists) return false;
 
@@ -112,6 +121,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       id: `admin-${Date.now()}`,
       loginId: account.loginId.trim(),
       password: account.password.trim(),
+      companyEmail: account.companyEmail?.trim() || undefined,
+      companyName: account.companyName?.trim() || undefined,
       createdAt: new Date().toISOString(),
     };
     const updated = [...adminAccounts, newAcc];

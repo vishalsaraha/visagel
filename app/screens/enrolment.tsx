@@ -22,6 +22,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as MailComposer from 'expo-mail-composer';
 import AppDateTimePicker from '@/components/AppDateTimePicker';
+import { ThemedAlert } from '@/components/ThemedAlertProvider';
 
 const THEME_COLOR = '#FF6900';
 const THEME_COLOR_10_OPACITY = 'rgba(255, 105, 0, 0.1)';
@@ -44,8 +45,19 @@ export default function EnrolmentScreen() {
 
   const [selectedDept, setSelectedDept] = useState<Department>('All');
   const [searchQuery, setSearchQuery] = useState('');
+  const [faceStatusFilter, setFaceStatusFilter] = useState<'All' | 'Mapped' | 'Pending'>('All');
+  const [sortBy, setSortBy] = useState<'name' | 'id' | 'recent'>('name');
+  const [isFilterExpanded, setIsFilterExpanded] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  const hasActiveFilters = selectedDept !== 'All' || faceStatusFilter !== 'All' || sortBy !== 'name';
+  const activeFilterCount = (selectedDept !== 'All' ? 1 : 0) + (faceStatusFilter !== 'All' ? 1 : 0) + (sortBy !== 'name' ? 1 : 0);
+  const handleResetFilters = () => {
+    setSelectedDept('All');
+    setFaceStatusFilter('All');
+    setSortBy('name');
+  };
   
   const [formData, setFormData] = useState({
     employeeId: 'BR-029',
@@ -117,13 +129,13 @@ export default function EnrolmentScreen() {
   const handleCapturePhoto = async () => {
     if (cameraRef.current) {
       try {
-        const photo = await cameraRef.current.takePictureAsync({ quality: 0.5 });
+        const photo = await cameraRef.current.takePictureAsync({ quality: 0.5, shutterSound: false });
         if (photo && photo.uri) {
           setCapturedPhoto(photo.uri);
           setCameraVisible(false);
         }
       } catch {
-        Alert.alert('Error', 'Failed to capture photo. Please try again.');
+        ThemedAlert.alert('Capture Error', 'Failed to capture photo. Please try again.', [{ text: 'OK' }], 'error');
       }
     }
   };
@@ -157,7 +169,7 @@ export default function EnrolmentScreen() {
   };
 
   const handleDeleteEnrolment = (id: string, name: string) => {
-    Alert.alert(
+    ThemedAlert.alert(
       'Delete Enrolment',
       `Are you sure you want to delete ${name}?`,
       [
@@ -167,7 +179,7 @@ export default function EnrolmentScreen() {
           style: 'destructive',
           onPress: async () => {
             await deleteEnrolledEmployee(id);
-            Alert.alert('Deleted', 'Enrolment record removed successfully.');
+            ThemedAlert.alert('Deleted', 'Enrolment record removed successfully.', [{ text: 'OK' }], 'success');
           },
         },
       ]
@@ -176,11 +188,11 @@ export default function EnrolmentScreen() {
 
   const handleEnrolment = async () => {
     if (!formData.employeeId.trim()) {
-      Alert.alert('Error', 'Please enter an Employee ID.');
+      ThemedAlert.alert('Validation Error', 'Please enter an Employee ID.', [{ text: 'OK' }], 'warning');
       return;
     }
     if (!formData.name || !formData.phone) {
-      Alert.alert('Error', 'Please fill in Employee Name and Phone Number.');
+      ThemedAlert.alert('Validation Error', 'Please fill in Employee Name and Phone Number.', [{ text: 'OK' }], 'warning');
       return;
     }
 
@@ -190,7 +202,7 @@ export default function EnrolmentScreen() {
         (e) => e.employeeId.toLowerCase() === formData.employeeId.trim().toLowerCase()
       );
       if (duplicate) {
-        Alert.alert('Duplicate ID', `Employee ID "${formData.employeeId.trim()}" already exists. Please choose a different ID.`);
+        ThemedAlert.alert('Duplicate ID', `Employee ID "${formData.employeeId.trim()}" already exists. Please choose a different ID.`, [{ text: 'OK' }], 'error');
         return;
       }
     }
@@ -205,7 +217,7 @@ export default function EnrolmentScreen() {
         joiningDate: joiningDateStr,
         photoUri: capturedPhoto,
       });
-      Alert.alert('Success', `Successfully updated ${formData.name}!`);
+      ThemedAlert.alert('Success', `Successfully updated ${formData.name}!`, [{ text: 'Done' }], 'success');
     } else {
       await addEnrolledEmployee({
         employeeId: formData.employeeId.trim(),
@@ -215,7 +227,7 @@ export default function EnrolmentScreen() {
         joiningDate: joiningDateStr,
         photoUri: capturedPhoto,
       });
-      Alert.alert('Success', `Successfully enrolled ${formData.name} (${formData.employeeId.trim()})!`);
+      ThemedAlert.alert('Success', `Successfully enrolled ${formData.name} (${formData.employeeId.trim()})!`, [{ text: 'Done' }], 'success');
     }
 
     setModalVisible(false);
@@ -244,7 +256,7 @@ export default function EnrolmentScreen() {
 
       return fileUri;
     } catch {
-      Alert.alert('Error', 'Failed to generate CSV file.');
+      ThemedAlert.alert('CSV Error', 'Failed to generate CSV file.', [{ text: 'OK' }], 'error');
       return null;
     }
   };
@@ -252,7 +264,7 @@ export default function EnrolmentScreen() {
   const handleExportCsv = async () => {
     toggleDock();
     if (filteredList.length === 0) {
-      Alert.alert('Notice', 'No enrolment records available to export.');
+      ThemedAlert.alert('Notice', 'No enrolment records available to export.', [{ text: 'OK' }], 'info');
       return;
     }
 
@@ -266,7 +278,7 @@ export default function EnrolmentScreen() {
           UTI: 'public.comma-separated-values-text',
         });
       } else {
-        Alert.alert('Error', 'Sharing is not available on this device.');
+        ThemedAlert.alert('Error', 'Sharing is not available on this device.', [{ text: 'OK' }], 'error');
       }
     }
   };
@@ -274,13 +286,13 @@ export default function EnrolmentScreen() {
   const handleShareViaEmail = async () => {
     toggleDock();
     if (filteredList.length === 0) {
-      Alert.alert('Notice', 'No enrolment records available to send.');
+      ThemedAlert.alert('Notice', 'No enrolment records available to send.', [{ text: 'OK' }], 'info');
       return;
     }
 
     const isAvailable = await MailComposer.isAvailableAsync();
     if (!isAvailable) {
-      Alert.alert('Error', 'Email composition is not available on this device.');
+      ThemedAlert.alert('Error', 'Email composition is not available on this device.', [{ text: 'OK' }], 'error');
       return;
     }
 
@@ -294,15 +306,32 @@ export default function EnrolmentScreen() {
     }
   };
 
-  // Filtered employees list based on Department and Search
-  const filteredList = enrolledEmployees.filter((item) => {
-    const matchesDept = selectedDept === 'All' || item.department === selectedDept;
-    const matchesSearch =
-      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.employeeId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.phone.includes(searchQuery);
-    return matchesDept && matchesSearch;
-  });
+  // Filtered employees list based on Department, Search, Face Status & Sorting
+  const filteredList = enrolledEmployees
+    .filter((item) => {
+      const matchesDept = selectedDept === 'All' || item.department === selectedDept;
+      const q = searchQuery.trim().toLowerCase();
+      const matchesSearch =
+        !q ||
+        item.name.toLowerCase().includes(q) ||
+        item.employeeId.toLowerCase().includes(q) ||
+        item.phone.includes(q);
+      const matchesFace =
+        faceStatusFilter === 'All' ||
+        (faceStatusFilter === 'Mapped' && Boolean(item.photoUri)) ||
+        (faceStatusFilter === 'Pending' && !item.photoUri);
+      return matchesDept && matchesSearch && matchesFace;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'name') return a.name.localeCompare(b.name);
+      if (sortBy === 'id') return a.employeeId.localeCompare(b.employeeId);
+      if (sortBy === 'recent') {
+        const dA = a.joiningDate ? new Date(a.joiningDate).getTime() : 0;
+        const dB = b.joiningDate ? new Date(b.joiningDate).getTime() : 0;
+        return dB - dA;
+      }
+      return 0;
+    });
 
   const addTranslateY = animationValue.interpolate({
     inputRange: [0, 1],
@@ -343,7 +372,7 @@ export default function EnrolmentScreen() {
             style={styles.lockBtn}
             activeOpacity={0.8}
             onPress={() => {
-              Alert.alert(
+              ThemedAlert.alert(
                 'Lock Screen',
                 'Lock Admin and return to Attendance Screen?',
                 [
@@ -366,50 +395,161 @@ export default function EnrolmentScreen() {
         </View>
       </View>
 
-      {/* Search Input Bar */}
+      {/* Search Input Bar with Expandable Filter Icon */}
       <View style={styles.searchBarWrap}>
-        <View style={styles.searchBox}>
-          <FontAwesome name="search" size={14} color="#94A3B8" style={{ marginRight: 8 }} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search by name, ID or phone..."
-            placeholderTextColor="#94A3B8"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchQuery ? (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <FontAwesome name="times-circle" size={14} color="#94A3B8" />
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      </View>
+        <View style={styles.searchAndFilterRow}>
+          <View style={styles.searchBox}>
+            <FontAwesome name="search" size={13} color="#94A3B8" style={{ marginRight: 8 }} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search name, ID, phone..."
+              placeholderTextColor="#94A3B8"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+            {searchQuery ? (
+              <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <FontAwesome name="times-circle" size={13} color="#94A3B8" />
+              </TouchableOpacity>
+            ) : null}
+          </View>
 
-      {/* Department Filter Horizontal Tabs */}
-      <View style={styles.deptFilterContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.deptFilterScroll}>
-          {DEPT_FILTER_LIST.map((dept) => {
-            const isSelected = selectedDept === dept;
-            const count = dept === 'All' ? enrolledEmployees.length : enrolledEmployees.filter((e) => e.department === dept).length;
-            return (
+          <TouchableOpacity
+            style={[
+              styles.filterToggleBtn,
+              isFilterExpanded && styles.filterToggleBtnActive,
+              hasActiveFilters && styles.filterToggleBtnHasFilter,
+            ]}
+            onPress={() => setIsFilterExpanded(!isFilterExpanded)}
+            activeOpacity={0.75}
+          >
+            <MaterialCommunityIcons
+              name="filter-variant"
+              size={18}
+              color={hasActiveFilters ? '#FFFFFF' : isFilterExpanded ? THEME_COLOR : '#475569'}
+            />
+            {activeFilterCount > 0 && (
+              <View style={styles.filterBadgeCount}>
+                <Text style={styles.filterBadgeCountText}>{activeFilterCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* Compact summary when collapsed & active */}
+        {!isFilterExpanded && hasActiveFilters && (
+          <View style={styles.activeFilterSummaryBar}>
+            <MaterialCommunityIcons name="filter-check" size={12} color={THEME_COLOR} style={{ marginRight: 4 }} />
+            <Text style={styles.activeFilterSummaryText} numberOfLines={1}>
+              {[selectedDept !== 'All' ? `Dept: ${selectedDept}` : null, faceStatusFilter !== 'All' ? `${faceStatusFilter} Face` : null, sortBy !== 'name' ? `Sorted: ${sortBy}` : null].filter(Boolean).join(' · ')}
+            </Text>
+            <TouchableOpacity onPress={handleResetFilters} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <MaterialCommunityIcons name="close-circle" size={14} color="#94A3B8" style={{ marginLeft: 6 }} />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Expandable Filter Drawer */}
+        {isFilterExpanded && (
+          <View style={styles.expandableFilterCard}>
+            <View style={styles.filterCardHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <MaterialCommunityIcons name="tune-variant" size={13} color={THEME_COLOR} style={{ marginRight: 4 }} />
+                <Text style={styles.filterCardHeading}>FILTERS & SORTING</Text>
+              </View>
+              {hasActiveFilters && (
+                <TouchableOpacity onPress={handleResetFilters} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Text style={styles.filterResetLink}>Reset Filters</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Department Section */}
+            <Text style={styles.filterGroupTitle}>DEPARTMENT</Text>
+            <View style={styles.pillsWrapRow}>
+              {DEPT_FILTER_LIST.map((dept) => {
+                const isSelected = selectedDept === dept;
+                const count = dept === 'All' ? enrolledEmployees.length : enrolledEmployees.filter((e) => e.department === dept).length;
+                return (
+                  <TouchableOpacity
+                    key={dept}
+                    style={[styles.compactPill, isSelected ? styles.compactPillActive : styles.compactPillInactive]}
+                    onPress={() => setSelectedDept(dept as Department)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[styles.compactPillText, isSelected ? styles.compactPillTextActive : styles.compactPillTextInactive]}>
+                      {dept}
+                    </Text>
+                    <View style={[styles.compactCountBadge, isSelected ? styles.compactCountActive : styles.compactCountInactive]}>
+                      <Text style={[styles.compactCountText, isSelected ? styles.compactCountTextActive : styles.compactCountTextInactive]}>
+                        {count}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Face Mapping Status Section */}
+            <Text style={[styles.filterGroupTitle, { marginTop: 10 }]}>FACE MAPPING</Text>
+            <View style={styles.pillsWrapRow}>
               <TouchableOpacity
-                key={dept}
-                style={[styles.deptPill, isSelected ? styles.deptPillActive : styles.deptPillInactive]}
-                onPress={() => setSelectedDept(dept as Department)}
+                style={[styles.compactPill, faceStatusFilter === 'All' && styles.compactPillActive]}
+                onPress={() => setFaceStatusFilter('All')}
                 activeOpacity={0.75}
               >
-                <Text style={[styles.deptPillText, isSelected ? styles.deptPillTextActive : styles.deptPillTextInactive]}>
-                  {dept}
+                <Text style={[styles.compactPillText, faceStatusFilter === 'All' && styles.compactPillTextActive]}>
+                  All ({enrolledEmployees.length})
                 </Text>
-                <View style={[styles.deptCountBadge, isSelected ? styles.deptCountBadgeActive : styles.deptCountBadgeInactive]}>
-                  <Text style={[styles.deptCountText, isSelected ? styles.deptCountTextActive : styles.deptCountTextInactive]}>
-                    {count}
-                  </Text>
-                </View>
               </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+
+              <TouchableOpacity
+                style={[styles.compactPill, faceStatusFilter === 'Mapped' && styles.compactPillActive]}
+                onPress={() => setFaceStatusFilter('Mapped')}
+                activeOpacity={0.75}
+              >
+                <FontAwesome name="check-circle" size={10} color={faceStatusFilter === 'Mapped' ? '#FFFFFF' : '#10B981'} style={{ marginRight: 4 }} />
+                <Text style={[styles.compactPillText, faceStatusFilter === 'Mapped' && styles.compactPillTextActive]}>
+                  Mapped ({enrolledEmployees.filter((e) => Boolean(e.photoUri)).length})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.compactPill, faceStatusFilter === 'Pending' && styles.compactPillActive]}
+                onPress={() => setFaceStatusFilter('Pending')}
+                activeOpacity={0.75}
+              >
+                <FontAwesome name="exclamation-circle" size={10} color={faceStatusFilter === 'Pending' ? '#FFFFFF' : '#F59E0B'} style={{ marginRight: 4 }} />
+                <Text style={[styles.compactPillText, faceStatusFilter === 'Pending' && styles.compactPillTextActive]}>
+                  Pending ({enrolledEmployees.filter((e) => !e.photoUri).length})
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Sort Order Section */}
+            <Text style={[styles.filterGroupTitle, { marginTop: 10 }]}>SORT ORDER</Text>
+            <View style={styles.pillsWrapRow}>
+              {(
+                [
+                  { id: 'name', label: 'Name (A-Z)' },
+                  { id: 'id', label: 'ID' },
+                  { id: 'recent', label: 'Recent' },
+                ] as const
+              ).map((s) => (
+                <TouchableOpacity
+                  key={s.id}
+                  style={[styles.compactPill, sortBy === s.id && styles.compactPillActive]}
+                  onPress={() => setSortBy(s.id)}
+                  activeOpacity={0.75}
+                >
+                  <Text style={[styles.compactPillText, sortBy === s.id && styles.compactPillTextActive]}>
+                    {s.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
       </View>
 
       {/* List View */}
@@ -444,12 +584,12 @@ export default function EnrolmentScreen() {
                   <View style={styles.cardAvatarCircle}>
                     <FontAwesome name="user" size={16} color="#FF6900" />
                   </View>
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.cardEmpName}>{item.name}</Text>
+                  <View style={{ flex: 1, marginLeft: 10, overflow: 'hidden' }}>
+                    <Text style={styles.cardEmpName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 6, flexWrap: 'wrap' }}>
-                      <Text style={styles.cardEmpIdBadge}>{item.employeeId}</Text>
+                      <Text style={styles.cardEmpIdBadge} numberOfLines={1}>{item.employeeId}</Text>
                       <View style={styles.cardDeptBadge}>
-                        <Text style={styles.cardDeptBadgeText}>{item.department || 'General'}</Text>
+                        <Text style={styles.cardDeptBadgeText} numberOfLines={1}>{item.department || 'General'}</Text>
                       </View>
                     </View>
                   </View>
@@ -475,13 +615,13 @@ export default function EnrolmentScreen() {
                 <View style={styles.cardDetailsRow}>
                   <View style={styles.detailTag}>
                     <FontAwesome name="phone" size={11} color="#64748B" style={{ marginRight: 4 }} />
-                    <Text style={styles.detailTagText}>{item.phone}</Text>
+                    <Text style={styles.detailTagText} numberOfLines={1}>{item.phone}</Text>
                   </View>
 
                   {item.joiningDate && (
                     <View style={styles.detailTag}>
                       <FontAwesome name="calendar" size={10} color="#64748B" style={{ marginRight: 4 }} />
-                      <Text style={styles.detailTagText}>{item.joiningDate}</Text>
+                      <Text style={styles.detailTagText} numberOfLines={1}>{item.joiningDate}</Text>
                     </View>
                   )}
 
@@ -492,7 +632,7 @@ export default function EnrolmentScreen() {
                       color={item.photoUri ? '#059669' : '#C2410C'}
                       style={{ marginRight: 3 }}
                     />
-                    <Text style={[styles.faceMappedText, { color: item.photoUri ? '#059669' : '#C2410C' }]}>
+                    <Text style={[styles.faceMappedText, { color: item.photoUri ? '#059669' : '#C2410C' }]} numberOfLines={1}>
                       {item.photoUri ? 'Face Mapped' : 'Pending Face'}
                     </Text>
                   </View>
@@ -706,7 +846,9 @@ export default function EnrolmentScreen() {
         <View style={styles.cameraModalContainer}>
           <StatusBar barStyle="light-content" backgroundColor="#000000" translucent={true} />
           {/* CameraView full screen */}
-          <CameraView style={StyleSheet.absoluteFillObject} facing="front" ref={cameraRef} />
+          {cameraVisible && (
+            <CameraView style={StyleSheet.absoluteFillObject} facing="front" ref={cameraRef} />
+          )}
 
           {/* Absolute Positioned Overlay UI */}
           <SafeAreaView style={styles.cameraOverlayContainer} pointerEvents="box-none">
@@ -807,88 +949,181 @@ const styles = StyleSheet.create({
   },
   searchBarWrap: {
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 10,
     paddingBottom: 6,
     backgroundColor: '#FFFFFF',
   },
+  searchAndFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   searchBox: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F1F5F9',
     borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    height: 42,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
   searchInput: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 12.5,
     color: '#0F172A',
     fontWeight: '500',
+    paddingVertical: 0,
   },
-  deptFilterContainer: {
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-    paddingVertical: 8,
-  },
-  deptFilterScroll: {
-    paddingHorizontal: 16,
-    gap: 8,
-  },
-  deptPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 20,
-    gap: 6,
+  filterToggleBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
     borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
   },
-  deptPillActive: {
-    backgroundColor: '#FF6900',
-    borderColor: '#FF6900',
-    shadowColor: '#FF6900',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
+  filterToggleBtnActive: {
+    borderColor: THEME_COLOR,
+    backgroundColor: '#FFF7ED',
   },
-  deptPillInactive: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#FFEDD5',
+  filterToggleBtnHasFilter: {
+    backgroundColor: THEME_COLOR,
+    borderColor: THEME_COLOR,
   },
-  deptPillText: {
-    fontSize: 12,
-    fontWeight: '700',
+  filterBadgeCount: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: '#EF4444',
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
   },
-  deptPillTextActive: {
+  filterBadgeCountText: {
     color: '#FFFFFF',
-  },
-  deptPillTextInactive: {
-    color: '#C2410C',
-  },
-  deptCountBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 10,
-  },
-  deptCountBadgeActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-  },
-  deptCountBadgeInactive: {
-    backgroundColor: '#FFEDD5',
-  },
-  deptCountText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '800',
   },
-  deptCountTextActive: {
+  activeFilterSummaryBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 8,
+  },
+  activeFilterSummaryText: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#C2410C',
+  },
+  expandableFilterCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#FFEDD5',
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 8,
+    shadowColor: THEME_COLOR,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  filterCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  filterCardHeading: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.6,
+  },
+  filterResetLink: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#EF4444',
+  },
+  filterGroupTitle: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 0.5,
+    marginBottom: 5,
+    textTransform: 'uppercase',
+  },
+  pillsWrapRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  compactPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4.5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  compactPillActive: {
+    borderColor: THEME_COLOR,
+    backgroundColor: THEME_COLOR,
+  },
+  compactPillInactive: {
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  compactPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  compactPillTextActive: {
     color: '#FFFFFF',
   },
-  deptCountTextInactive: {
-    color: '#C2410C',
+  compactPillTextInactive: {
+    color: '#475569',
+  },
+  compactCountBadge: {
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 6,
+    marginLeft: 4,
+  },
+  compactCountActive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  compactCountInactive: {
+    backgroundColor: '#E2E8F0',
+  },
+  compactCountText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+  },
+  compactCountTextActive: {
+    color: '#FFFFFF',
+  },
+  compactCountTextInactive: {
+    color: '#64748B',
   },
   // Department grid selector in modal
   deptGridWrap: {
@@ -992,6 +1227,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 3,
     elevation: 1,
+    overflow: 'hidden',
   },
   cardHeaderRow: {
     flexDirection: 'row',

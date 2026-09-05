@@ -15,8 +15,10 @@ import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { useAttendance, EmployeeAttendance } from '@/context/AttendanceContext';
+import { ThemedAlert } from '@/components/ThemedAlertProvider';
 import * as Calendar from 'expo-calendar';
 import * as Sharing from 'expo-sharing';
+import * as MailComposer from 'expo-mail-composer';
 import * as FileSystem from 'expo-file-system/legacy';
 import AppDateTimePicker from '@/components/AppDateTimePicker';
 
@@ -24,13 +26,26 @@ const THEME_COLOR = '#FF6900';
 
 export default function DashboardScreen() {
   const router = useRouter();
-  const { logout } = useAuth();
+  const { logout, currentUser } = useAuth();
   const { attendanceRecords, multipleTimeEntries, recordPunch, removePunch, departments } = useAttendance();
   const [date, setDate] = useState(new Date());
   const [showPicker, setShowPicker] = useState(false);
   const [selectedEmpPunches, setSelectedEmpPunches] = useState<EmployeeAttendance | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDept, setSelectedDept] = useState('All');
+  const [selectedStatus, setSelectedStatus] = useState<'All' | 'Present' | 'Late' | 'Half Day'>('All');
+  const [selectedPunchType, setSelectedPunchType] = useState<'All' | 'IN Only' | 'OUT Only'>('All');
+  const [sortBy, setSortBy] = useState<'name' | 'time' | 'punches'>('name');
+  const [isFilterExpanded, setIsFilterExpanded] = useState(false);
+
+  const hasActiveFilters = selectedDept !== 'All' || selectedStatus !== 'All' || selectedPunchType !== 'All' || sortBy !== 'name';
+  const activeFiltersCount = (selectedDept !== 'All' ? 1 : 0) + (selectedStatus !== 'All' ? 1 : 0) + (selectedPunchType !== 'All' ? 1 : 0) + (sortBy !== 'name' ? 1 : 0);
+  const resetFilters = () => {
+    setSelectedDept('All');
+    setSelectedStatus('All');
+    setSelectedPunchType('All');
+    setSortBy('name');
+  };
 
   const selectedDateStr = date.toISOString().split('T')[0];
   const dayRecords = attendanceRecords.filter((r) => r.date === selectedDateStr);
@@ -38,16 +53,48 @@ export default function DashboardScreen() {
   // Dept filter list (always has 'All' first)
   const deptList = ['All', ...departments];
 
-  // Filtered records applying dept filter + search
-  const filteredRecords = dayRecords.filter((r) => {
-    const matchesDept = selectedDept === 'All' || r.department === selectedDept;
-    const q = searchQuery.trim().toLowerCase();
-    const matchesSearch =
-      !q ||
-      r.name.toLowerCase().includes(q) ||
-      r.employeeId.toLowerCase().includes(q);
-    return matchesDept && matchesSearch;
-  });
+  // Filtered records applying dept filter + status + punch type + search + sorting
+  const filteredRecords = dayRecords
+    .filter((r) => {
+      const matchesDept = selectedDept === 'All' || r.department === selectedDept;
+      
+      const matchesStatus =
+        selectedStatus === 'All' ||
+        (selectedStatus === 'Present' && (r.status === 'PRESENT' || r.punches.length > 0)) ||
+        (selectedStatus === 'Late' && r.status === 'LATE') ||
+        (selectedStatus === 'Half Day' && r.status === 'HALF_DAY');
+
+      let matchesPunchType = true;
+      if (selectedPunchType === 'IN Only') {
+        const lastPunch = r.punches[r.punches.length - 1];
+        matchesPunchType = lastPunch ? lastPunch.type === 'IN' : false;
+      } else if (selectedPunchType === 'OUT Only') {
+        const lastPunch = r.punches[r.punches.length - 1];
+        matchesPunchType = lastPunch ? lastPunch.type === 'OUT' : false;
+      }
+
+      const q = searchQuery.trim().toLowerCase();
+      const matchesSearch =
+        !q ||
+        r.name.toLowerCase().includes(q) ||
+        r.employeeId.toLowerCase().includes(q);
+
+      return matchesDept && matchesStatus && matchesPunchType && matchesSearch;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'name') {
+        return a.name.localeCompare(b.name);
+      }
+      if (sortBy === 'punches') {
+        return b.punches.length - a.punches.length;
+      }
+      if (sortBy === 'time') {
+        const lastA = a.punches[a.punches.length - 1]?.time || '';
+        const lastB = b.punches[b.punches.length - 1]?.time || '';
+        return lastB.localeCompare(lastA);
+      }
+      return 0;
+    });
 
   const stats = {
     markedToday: dayRecords.length,
@@ -55,7 +102,7 @@ export default function DashboardScreen() {
   };
 
   const handleDeletePunch = (employeeId: string, date: string, punchId: string, punchTime: string) => {
-    Alert.alert(
+    ThemedAlert.alert(
       'Remove Punch',
       `Remove the ${punchTime} punch entry for this employee?`,
       [
@@ -80,22 +127,124 @@ export default function DashboardScreen() {
   const handleCalendarIntegration = async () => {
     try {
       const { status } = await Calendar.requestCalendarPermissionsAsync();
-      if (status === 'granted') {
-        const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
-        Alert.alert('Calendar Success', `Found ${calendars.length} calendar(s) on device.`);
-      } else {
-        Alert.alert('Permission Denied', 'Calendar permission is required to sync events.');
+      if (status !== 'granted') {
+        ThemedAlert.alert('Permission Required', 'Calendar permission is required to sync attendance logs to device calendar.', [{ text: 'OK' }], 'warning');
+        return;
       }
+
+      const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+      let targetCal = calendars.find((c) => c.title === 'Visagel Attendance' || c.name === 'Visagel Attendance') ||
+                      calendars.find((c) => c.isPrimary) ||
+                      calendars.find((c) => c.allowsModifications) ||
+                      calendars[0];
+
+      if (!targetCal) {
+        const newId = await Calendar.createCalendarAsync({
+          title: 'Visagel Attendance',
+          color: '#FF6900',
+          entityType: Calendar.EntityTypes.EVENT,
+          source: {
+            isLocalAccount: true,
+            name: 'Visagel',
+            type: Calendar.SourceType.LOCAL,
+          },
+          name: 'Visagel Attendance',
+          ownerAccount: 'Visagel',
+          accessLevel: Calendar.CalendarAccessLevel.OWNER,
+        });
+        targetCal = { id: newId, title: 'Visagel Attendance' } as any;
+      }
+
+      const startDate = new Date(selectedDateStr + 'T09:00:00');
+      const endDate = new Date(selectedDateStr + 'T18:00:00');
+      const title = `Visagel Attendance: ${dayRecords.length} Present (${selectedDateStr})`;
+      const notes =
+        `Daily Attendance Summary for ${selectedDateStr}\n` +
+        `Total Present: ${dayRecords.length}\n` +
+        (dayRecords.length > 0
+          ? dayRecords
+              .map(
+                (r, i) =>
+                  `${i + 1}. ${r.name} (${r.employeeId}) [${r.department || 'General'}]: ${r.punches
+                    .map((p) => `${p.type} ${p.time}`)
+                    .join(' -> ')}`
+              )
+              .join('\n')
+          : 'No attendance logs recorded for this day.');
+
+      await Calendar.createEventAsync(targetCal.id, {
+        title,
+        startDate,
+        endDate,
+        notes,
+        location: 'Visagel Smart Face Terminal',
+        alarms: [{ relativeOffset: -15 }],
+      });
+
+      ThemedAlert.alert(
+        'Calendar Synced!',
+        `Successfully added attendance summary event for ${selectedDateStr} to your calendar ("${targetCal.title}"). Total ${dayRecords.length} staff records linked.`,
+        [{ text: 'Awesome', style: 'default' }],
+        'success'
+      );
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown calendar error occurred';
-      Alert.alert('Calendar Error', errMsg);
+      ThemedAlert.alert('Calendar Sync Error', errMsg, [{ text: 'OK' }], 'error');
+    }
+  };
+
+  const handleSendEmailSummary = async () => {
+    try {
+      const companyEmail = currentUser?.companyEmail || 'admin@company.com';
+      const companyName = currentUser?.companyName || 'Visagel Enterprise';
+
+      const isAvailable = await MailComposer.isAvailableAsync();
+      if (!isAvailable) {
+        ThemedAlert.alert('Email Unavailable', 'Email composition is not available on this device.', [{ text: 'OK' }], 'error');
+        return;
+      }
+
+      let csvContent = 'SI No.,Employee ID,Name,Department,Date,Status,First In,Last Out,Total Punches,Punch Log\n';
+      dayRecords.forEach((r, idx) => {
+        const firstIn = r.punches.find((p) => p.type === 'IN')?.time || 'N/A';
+        const lastOut = [...r.punches].reverse().find((p) => p.type === 'OUT')?.time || 'N/A';
+        const punchLog = r.punches.map((p) => `[${p.type}: ${p.time}]`).join(' | ');
+        csvContent += `${idx + 1},"${r.employeeId}","${r.name}","${r.department || 'General'}","${r.date}","${r.status}","${firstIn}","${lastOut}","${r.punches.length}","${punchLog}"\n`;
+      });
+
+      const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+      const fileUri = `${baseDir}visagel_daily_summary_${selectedDateStr}.csv`;
+      await FileSystem.writeAsStringAsync(fileUri, csvContent);
+
+      const emailBody =
+        `Dear Team,\n\n` +
+        `Here is the Daily Attendance Summary for ${selectedDateStr}:\n\n` +
+        `• Organization: ${companyName}\n` +
+        `• Target Date: ${selectedDateStr}\n` +
+        `• Staff Present: ${dayRecords.length}\n` +
+        `• Total Enrolled: ${stats.totalEnrolled}\n` +
+        `• Logged Admin: ${currentUser?.name || 'Admin'} (${currentUser?.loginId || 'admin'})\n\n` +
+        `Attached CSV contains all raw biometric punch stamps.\n\n` +
+        `Generated by Visagel Facial Attendance System.`;
+
+      await MailComposer.composeAsync({
+        recipients: [companyEmail],
+        subject: `[Daily Attendance Report] ${companyName} - ${selectedDateStr}`,
+        body: emailBody,
+        attachments: [fileUri],
+      });
+
+      ThemedAlert.alert('Email Ready', `Daily attendance summary dispatched to ${companyEmail}.`, [{ text: 'Done', style: 'default' }], 'success');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to compose email.';
+      ThemedAlert.alert('Email Error', msg, [{ text: 'OK' }], 'error');
     }
   };
 
   const exportToCSV = async () => {
     try {
       if (dayRecords.length === 0) {
-        Alert.alert('Notice', 'No attendance records available for this date to export.');
+        ThemedAlert.alert('Notice', 'No attendance records available for this date to export.', [{ text: 'OK' }], 'info');
         return;
       }
 
@@ -109,14 +258,14 @@ export default function DashboardScreen() {
 
       const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory;
       if (!baseDir) {
-        Alert.alert('Error', 'Storage directory not available');
+        ThemedAlert.alert('Error', 'Storage directory not available', [{ text: 'OK' }], 'error');
         return;
       }
       const fileUri = `${baseDir}attendance_report_${selectedDateStr}.csv`;
       await FileSystem.writeAsStringAsync(fileUri, csvContent);
 
       if (!(await Sharing.isAvailableAsync())) {
-        Alert.alert('Error', 'Sharing is not available on this device');
+        ThemedAlert.alert('Error', 'Sharing is not available on this device', [{ text: 'OK' }], 'error');
         return;
       }
 
@@ -126,7 +275,7 @@ export default function DashboardScreen() {
       });
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown export error occurred';
-      Alert.alert('Export Failed', errMsg);
+      ThemedAlert.alert('Export Failed', errMsg, [{ text: 'OK' }], 'error');
     }
   };
 
@@ -149,7 +298,7 @@ export default function DashboardScreen() {
             style={styles.lockBtn}
             activeOpacity={0.8}
             onPress={() => {
-              Alert.alert(
+              ThemedAlert.alert(
                 'Lock Screen',
                 'Lock Admin and return to Attendance Screen?',
                 [
@@ -221,64 +370,200 @@ export default function DashboardScreen() {
         {/* Action Buttons Row */}
         <View style={styles.actionRow}>
           <TouchableOpacity style={[styles.actionButton, { flex: 1 }]} onPress={exportToCSV} activeOpacity={0.8}>
-            <FontAwesome name="download" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.actionButtonText}>Export CSV</Text>
+            <FontAwesome name="download" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
+            <Text style={styles.actionButtonText} numberOfLines={1} adjustsFontSizeToFit>Export CSV</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={[styles.actionButton, { flex: 1, backgroundColor: '#0A192F' }]} onPress={handleCalendarIntegration} activeOpacity={0.8}>
-            <FontAwesome name="calendar-check-o" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.actionButtonText}>Sync Calendar</Text>
+            <FontAwesome name="calendar-check-o" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
+            <Text style={styles.actionButtonText} numberOfLines={1} adjustsFontSizeToFit>Sync Calendar</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={[styles.actionButton, { flex: 1, backgroundColor: '#059669' }]} onPress={handleSendEmailSummary} activeOpacity={0.8}>
+            <MaterialCommunityIcons name="email-fast-outline" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+            <Text style={styles.actionButtonText} numberOfLines={1} adjustsFontSizeToFit>Email Summary</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Department Filter + Search Bar */}
+        {/* Search & Expandable Filters Container */}
         <View style={styles.filterContainer}>
-          {/* Search input */}
-          <View style={styles.searchBox}>
-            <FontAwesome name="search" size={13} color="#94A3B8" style={{ marginRight: 8 }} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search name or Employee ID…"
-              placeholderTextColor="#94A3B8"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              autoCapitalize="none"
-              returnKeyType="search"
-            />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <FontAwesome name="times-circle" size={14} color="#CBD5E1" />
-              </TouchableOpacity>
-            )}
+          {/* Search input with Filter Button */}
+          <View style={styles.searchAndFilterRow}>
+            <View style={styles.searchBox}>
+              <FontAwesome name="search" size={13} color="#94A3B8" style={{ marginRight: 8 }} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search name or ID…"
+                placeholderTextColor="#94A3B8"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoCapitalize="none"
+                returnKeyType="search"
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <FontAwesome name="times-circle" size={14} color="#CBD5E1" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.filterToggleBtn,
+                isFilterExpanded && styles.filterToggleBtnActive,
+                hasActiveFilters && styles.filterToggleBtnHasFilter,
+              ]}
+              onPress={() => setIsFilterExpanded(!isFilterExpanded)}
+              activeOpacity={0.75}
+            >
+              <MaterialCommunityIcons
+                name="filter-variant"
+                size={18}
+                color={hasActiveFilters ? '#FFFFFF' : isFilterExpanded ? THEME_COLOR : '#475569'}
+              />
+              {activeFiltersCount > 0 && (
+                <View style={styles.filterBadgeCount}>
+                  <Text style={styles.filterBadgeCountText}>{activeFiltersCount}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
           </View>
 
-          {/* Department pills */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.deptScroll}
-          >
-            {deptList.map((dept) => (
-              <TouchableOpacity
-                key={dept}
-                style={[
-                  styles.deptPill,
-                  selectedDept === dept ? styles.deptPillActive : styles.deptPillInactive,
-                ]}
-                onPress={() => setSelectedDept(dept)}
-                activeOpacity={0.75}
-              >
-                <Text
-                  style={[
-                    styles.deptPillText,
-                    selectedDept === dept ? styles.deptPillTextActive : styles.deptPillTextInactive,
-                  ]}
-                >
-                  {dept}
-                </Text>
+          {/* Compact summary when collapsed & active */}
+          {!isFilterExpanded && hasActiveFilters && (
+            <View style={styles.activeFilterSummaryBar}>
+              <MaterialCommunityIcons name="filter-check" size={12} color={THEME_COLOR} style={{ marginRight: 4 }} />
+              <Text style={styles.activeFilterSummaryText} numberOfLines={1}>
+                {[selectedDept !== 'All' ? `Dept: ${selectedDept}` : null, selectedStatus !== 'All' ? `Status: ${selectedStatus}` : null, selectedPunchType !== 'All' ? `Punch: ${selectedPunchType}` : null, sortBy !== 'name' ? `Sorted: ${sortBy}` : null].filter(Boolean).join(' · ')}
+              </Text>
+              <TouchableOpacity onPress={resetFilters} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <MaterialCommunityIcons name="close-circle" size={14} color="#94A3B8" style={{ marginLeft: 6 }} />
               </TouchableOpacity>
-            ))}
-          </ScrollView>
+            </View>
+          )}
+
+          {/* Expandable Filter Drawer */}
+          {isFilterExpanded && (
+            <View style={styles.expandableFilterCard}>
+              <View style={styles.filterCardHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <MaterialCommunityIcons name="tune-variant" size={13} color={THEME_COLOR} style={{ marginRight: 4 }} />
+                  <Text style={styles.filterCardHeading}>ADVANCED FILTERS</Text>
+                </View>
+                {hasActiveFilters && (
+                  <TouchableOpacity onPress={resetFilters} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Text style={styles.filterResetLink}>Reset Filters</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Department pills */}
+              <Text style={styles.filterSectionLabel}>DEPARTMENT</Text>
+              <View style={styles.pillsWrapRow}>
+                {deptList.map((dept) => (
+                  <TouchableOpacity
+                    key={dept}
+                    style={[
+                      styles.compactPill,
+                      selectedDept === dept ? styles.compactPillActive : styles.compactPillInactive,
+                    ]}
+                    onPress={() => setSelectedDept(dept)}
+                    activeOpacity={0.75}
+                  >
+                    <Text
+                      style={[
+                        styles.compactPillText,
+                        selectedDept === dept ? styles.compactPillTextActive : styles.compactPillTextInactive,
+                      ]}
+                    >
+                      {dept}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Status Filter Pills */}
+              <Text style={[styles.filterSectionLabel, { marginTop: 10 }]}>ATTENDANCE STATUS</Text>
+              <View style={styles.pillsWrapRow}>
+                {(['All', 'Present', 'Late', 'Half Day'] as const).map((st) => (
+                  <TouchableOpacity
+                    key={st}
+                    style={[
+                      styles.compactPill,
+                      selectedStatus === st ? styles.compactPillActive : styles.compactPillInactive,
+                    ]}
+                    onPress={() => setSelectedStatus(st)}
+                    activeOpacity={0.75}
+                  >
+                    <Text
+                      style={[
+                        styles.compactPillText,
+                        selectedStatus === st ? styles.compactPillTextActive : styles.compactPillTextInactive,
+                      ]}
+                    >
+                      {st === 'All' ? 'All Status' : st}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Punch Activity Section */}
+              <Text style={[styles.filterSectionLabel, { marginTop: 10 }]}>PUNCH ACTIVITY</Text>
+              <View style={styles.pillsWrapRow}>
+                {(['All', 'IN Only', 'OUT Only'] as const).map((pt) => (
+                  <TouchableOpacity
+                    key={pt}
+                    style={[
+                      styles.compactPill,
+                      selectedPunchType === pt ? styles.compactPillActive : styles.compactPillInactive,
+                    ]}
+                    onPress={() => setSelectedPunchType(pt)}
+                    activeOpacity={0.75}
+                  >
+                    <Text
+                      style={[
+                        styles.compactPillText,
+                        selectedPunchType === pt ? styles.compactPillTextActive : styles.compactPillTextInactive,
+                      ]}
+                    >
+                      {pt}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Sort Section */}
+              <Text style={[styles.filterSectionLabel, { marginTop: 10 }]}>SORT BY</Text>
+              <View style={styles.pillsWrapRow}>
+                {(
+                  [
+                    { id: 'name', label: 'Name (A-Z)' },
+                    { id: 'time', label: 'Recent Punch' },
+                    { id: 'punches', label: 'Punch Count' },
+                  ] as const
+                ).map((s) => (
+                  <TouchableOpacity
+                    key={s.id}
+                    style={[
+                      styles.compactPill,
+                      sortBy === s.id ? styles.compactPillActive : styles.compactPillInactive,
+                    ]}
+                    onPress={() => setSortBy(s.id)}
+                    activeOpacity={0.75}
+                  >
+                    <Text
+                      style={[
+                        styles.compactPillText,
+                        sortBy === s.id ? styles.compactPillTextActive : styles.compactPillTextInactive,
+                      ]}
+                    >
+                      {s.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )}
         </View>
 
         {/* Daily Attendance Report Section */}
@@ -330,13 +615,13 @@ export default function DashboardScreen() {
                     <View style={styles.avatarCircle}>
                       <FontAwesome name="user" size={16} color="#FF6900" />
                     </View>
-                    <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={styles.empNameText}>{item.name}</Text>
-                      <Text style={styles.empIdText}>{item.employeeId}</Text>
+                    <View style={{ flex: 1, marginLeft: 10, overflow: 'hidden' }}>
+                      <Text style={styles.empNameText} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
+                      <Text style={styles.empIdText} numberOfLines={1}>{item.employeeId}</Text>
                     </View>
                     <View style={styles.punchCountBadge}>
                       <MaterialCommunityIcons name="gesture-tap" size={11} color="#2563EB" style={{ marginRight: 3 }} />
-                      <Text style={styles.punchCountBadgeText}>
+                      <Text style={styles.punchCountBadgeText} numberOfLines={1}>
                         {item.punches.length} {item.punches.length === 1 ? 'Punch' : 'Punches'}
                       </Text>
                     </View>
@@ -346,17 +631,17 @@ export default function DashboardScreen() {
                   <View style={styles.timingRow}>
                     <View style={styles.timePillIn}>
                       <MaterialCommunityIcons name="login" size={13} color="#059669" style={{ marginRight: 5 }} />
-                      <View>
-                        <Text style={styles.timePillLabelIn}>TIME IN</Text>
-                        <Text style={styles.timePillValueIn}>{firstIn}</Text>
+                      <View style={{ flex: 1, overflow: 'hidden' }}>
+                        <Text style={styles.timePillLabelIn} numberOfLines={1}>TIME IN</Text>
+                        <Text style={styles.timePillValueIn} numberOfLines={1} adjustsFontSizeToFit>{firstIn}</Text>
                       </View>
                     </View>
 
                     <View style={styles.timePillOut}>
                       <MaterialCommunityIcons name="logout" size={13} color="#C2410C" style={{ marginRight: 5 }} />
-                      <View>
-                        <Text style={styles.timePillLabelOut}>TIME OUT</Text>
-                        <Text style={styles.timePillValueOut}>{lastOut}</Text>
+                      <View style={{ flex: 1, overflow: 'hidden' }}>
+                        <Text style={styles.timePillLabelOut} numberOfLines={1}>TIME OUT</Text>
+                        <Text style={styles.timePillValueOut} numberOfLines={1} adjustsFontSizeToFit>{lastOut}</Text>
                       </View>
                     </View>
 
@@ -604,7 +889,8 @@ const styles = StyleSheet.create({
   actionButton: {
     flexDirection: 'row',
     backgroundColor: '#FF6900',
-    paddingVertical: 11,
+    paddingVertical: 9,
+    paddingHorizontal: 4,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
@@ -613,11 +899,13 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 3,
     elevation: 2,
+    overflow: 'hidden',
   },
   actionButtonText: {
     color: '#FFFFFF',
     fontWeight: '700',
-    fontSize: 13,
+    fontSize: 11,
+    textAlign: 'center',
   },
   reportSectionHeader: {
     flexDirection: 'row',
@@ -694,6 +982,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 4,
     elevation: 1,
+    overflow: 'hidden',
   },
   cardTopRow: {
     flexDirection: 'row',
@@ -923,9 +1212,14 @@ const styles = StyleSheet.create({
   // ── New: Filter & Search styles ──────────────────────────────────────────
   filterContainer: {
     marginBottom: 14,
-    gap: 10,
+  },
+  searchAndFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   searchBox: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
@@ -933,44 +1227,143 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
     borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 9,
+    height: 42,
   },
   searchInput: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '600',
     color: '#0F172A',
     padding: 0,
   },
-  deptScroll: {
-    gap: 8,
-    paddingVertical: 2,
-  },
-  deptPill: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
+  filterToggleBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
     borderWidth: 1.5,
-  },
-  deptPillActive: {
-    backgroundColor: '#FF6900',
-    borderColor: '#FF6900',
-  },
-  deptPillInactive: {
-    backgroundColor: '#FFFFFF',
     borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
   },
-  deptPillText: {
-    fontSize: 12,
+  filterToggleBtnActive: {
+    borderColor: THEME_COLOR,
+    backgroundColor: '#FFF7ED',
+  },
+  filterToggleBtnHasFilter: {
+    backgroundColor: THEME_COLOR,
+    borderColor: THEME_COLOR,
+  },
+  filterBadgeCount: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: '#EF4444',
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  filterBadgeCountText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  activeFilterSummaryBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 8,
+  },
+  activeFilterSummaryText: {
+    flex: 1,
+    fontSize: 11,
     fontWeight: '700',
+    color: '#C2410C',
   },
-  deptPillTextActive: {
+  expandableFilterCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#FFEDD5',
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 8,
+    shadowColor: THEME_COLOR,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  filterCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  filterCardHeading: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.6,
+  },
+  filterResetLink: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#EF4444',
+  },
+  filterSectionLabel: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    color: '#94A3B8',
+    marginBottom: 5,
+    textTransform: 'uppercase',
+  },
+  pillsWrapRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  compactPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4.5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  compactPillActive: {
+    borderColor: THEME_COLOR,
+    backgroundColor: THEME_COLOR,
+  },
+  compactPillInactive: {
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  compactPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  compactPillTextActive: {
     color: '#FFFFFF',
   },
-  deptPillTextInactive: {
-    color: '#64748B',
+  compactPillTextInactive: {
+    color: '#475569',
   },
-  // ── New: Delete punch button ─────────────────────────────────────────────
+  // ── Delete punch button ─────────────────────────────────────────────
   deletePunchBtn: {
     width: 28,
     height: 28,

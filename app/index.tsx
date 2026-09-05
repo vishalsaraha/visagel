@@ -18,10 +18,12 @@ import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions, CameraType } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import { useAuth } from '@/context/AuthContext';
 import { useAttendance } from '@/context/AttendanceContext';
 import AuthPasswordModal from '@/components/AuthPasswordModal';
 import { findBestMatch } from '@/utils/faceMatch';
+import { ThemedAlert } from '@/components/ThemedAlertProvider';
 
 type ScanPhase = 'idle' | 'detecting' | 'aligning' | 'matching' | 'verified' | 'failed';
 
@@ -32,6 +34,7 @@ const AUTO_SCAN_INTERVAL = 3000;
 
 export default function AttendanceScreen() {
   const router = useRouter();
+  const isFocused = useIsFocused();
   const { verifyPassword, isAuthenticated } = useAuth();
   const {
     recordPunch,
@@ -42,6 +45,7 @@ export default function AttendanceScreen() {
     aiSettings,
   } = useAttendance();
 
+  const [isCameraReady, setIsCameraReady] = useState(false);
   const [authModalVisible, setAuthModalVisible] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
   const [currentDateStr, setCurrentDateStr] = useState('');
@@ -51,6 +55,18 @@ export default function AttendanceScreen() {
 
   // Auto-attendance toggle
   const [autoAttendance, setAutoAttendance] = useState(true);
+
+  // Stop scanning and clear timer when screen loses focus
+  useEffect(() => {
+    if (!isFocused) {
+      setIsCameraReady(false);
+      isScanningRef.current = false;
+      if (autoScanTimerRef.current) {
+        clearTimeout(autoScanTimerRef.current);
+        autoScanTimerRef.current = null;
+      }
+    }
+  }, [isFocused]);
 
   // Cooldown tracker per employee ID (timestamp of last punch)
   const lastPunchMapRef = useRef<Record<string, number>>({});
@@ -157,18 +173,19 @@ export default function AttendanceScreen() {
   // ── Core Scan Logic ────────────────────────────────────────────────────────
   const runScan = useCallback(
     async (isAuto = false) => {
-      if (isScanningRef.current) return;
+      if (!isFocused || !isCameraReady || isScanningRef.current) return;
 
       const pool = enrolledEmployees.filter((e) => Boolean(e.photoUri));
       if (pool.length === 0) {
         if (!isAuto) {
-          Alert.alert(
+          ThemedAlert.alert(
             'No Enrolled Photos',
             'Please enroll employee face photos first by logging into HR Admin.',
             [
-              { text: 'HR Login', onPress: handleAdminPress },
+              { text: 'HR Login', onPress: handleAdminPress, style: 'default' },
               { text: 'Cancel', style: 'cancel' },
-            ]
+            ],
+            'warning'
           );
         }
         return;
@@ -185,9 +202,10 @@ export default function AttendanceScreen() {
 
       let liveShotUri: string | null = null;
       try {
-        if (cameraRef.current) {
+        if (cameraRef.current && isCameraReady) {
           const photo = await cameraRef.current.takePictureAsync({
-            quality: 0.7,
+            quality: 0.5,
+            shutterSound: false,
           });
           liveShotUri = photo?.uri ?? null;
         }
@@ -209,7 +227,9 @@ export default function AttendanceScreen() {
           }, 1800);
         } else {
           isScanningRef.current = false;
-          scheduleNextAutoScan();
+          if (isFocused && isCameraReady) {
+            scheduleNextAutoScan();
+          }
         }
         return;
       }
@@ -287,7 +307,9 @@ export default function AttendanceScreen() {
             setStatusMessage('Scanning face...');
           }
           isScanningRef.current = false;
-          scheduleNextAutoScan();
+          if (isFocused && isCameraReady) {
+            scheduleNextAutoScan();
+          }
         }
         return;
       }
@@ -307,7 +329,7 @@ export default function AttendanceScreen() {
           setStatusMessage(`${matchedEmp.name} scanned recently (Cooldown active)`);
         }
         isScanningRef.current = false;
-        if (isAuto) scheduleNextAutoScan();
+        if (isAuto && isFocused && isCameraReady) scheduleNextAutoScan();
         return;
       }
 
@@ -343,12 +365,12 @@ export default function AttendanceScreen() {
         setFaceConfidence(0);
         setStatusMessage(autoAttendance ? 'Waiting for face...' : 'Face scanner ready');
         isScanningRef.current = false;
-        if (autoAttendance) {
+        if (autoAttendance && isFocused && isCameraReady) {
           scheduleNextAutoScan();
         }
       }, 3500);
     },
-    [enrolledEmployees, attendanceRecords, autoAttendance, aiSettings]
+    [enrolledEmployees, attendanceRecords, autoAttendance, aiSettings, isFocused, isCameraReady]
   );
 
   const runScanRef = useRef(runScan);
@@ -358,26 +380,32 @@ export default function AttendanceScreen() {
 
   const scheduleNextAutoScan = useCallback(() => {
     if (autoScanTimerRef.current) clearTimeout(autoScanTimerRef.current);
-    if (!autoAttendance) return;
+    if (!autoAttendance || !isFocused || !isCameraReady) return;
 
     autoScanTimerRef.current = setTimeout(() => {
-      if (!isScanningRef.current && runScanRef.current) {
+      if (!isScanningRef.current && runScanRef.current && isFocused && isCameraReady) {
         runScanRef.current(true);
       }
     }, AUTO_SCAN_INTERVAL);
-  }, [autoAttendance]);
+  }, [autoAttendance, isFocused, isCameraReady]);
 
-  // Auto scan trigger on mount or toggle
+  // Auto scan trigger on mount, focus, camera ready, or toggle
   useEffect(() => {
-    if (autoAttendance && enrolledEmployees.filter((e) => e.photoUri).length > 0) {
+    if (isFocused && isCameraReady && autoAttendance && enrolledEmployees.filter((e) => e.photoUri).length > 0) {
       scheduleNextAutoScan();
     } else {
-      if (autoScanTimerRef.current) clearTimeout(autoScanTimerRef.current);
+      if (autoScanTimerRef.current) {
+        clearTimeout(autoScanTimerRef.current);
+        autoScanTimerRef.current = null;
+      }
     }
     return () => {
-      if (autoScanTimerRef.current) clearTimeout(autoScanTimerRef.current);
+      if (autoScanTimerRef.current) {
+        clearTimeout(autoScanTimerRef.current);
+        autoScanTimerRef.current = null;
+      }
     };
-  }, [autoAttendance, enrolledEmployees, scheduleNextAutoScan]);
+  }, [isFocused, isCameraReady, autoAttendance, enrolledEmployees, scheduleNextAutoScan]);
 
   const handleAdminPress = () => {
     if (isAuthenticated) router.push('/screens/enrolment');
@@ -521,12 +549,22 @@ export default function AttendanceScreen() {
                   <Text style={styles.grantBtnText}>Grant Camera Permission</Text>
                 </TouchableOpacity>
               </View>
+            ) : !isFocused ? (
+              <View style={styles.permissionFallback}>
+                <ActivityIndicator size="small" color="#FF6900" style={{ marginBottom: 8 }} />
+                <Text style={styles.permissionSubtitle}>Resuming camera...</Text>
+              </View>
             ) : (
               <>
                 <CameraView
                   style={StyleSheet.absoluteFillObject}
                   facing="front"
                   ref={cameraRef}
+                  onCameraReady={() => setIsCameraReady(true)}
+                  onMountError={(e) => {
+                    console.warn('[AttendanceScreen] Camera mount error:', e?.message);
+                    setIsCameraReady(false);
+                  }}
                 />
 
                 {/* HUD Corners & Target Box */}

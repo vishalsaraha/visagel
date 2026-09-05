@@ -529,6 +529,8 @@ export interface AdminAccountDb {
   password: string;
   role: 'SUPER_ADMIN' | 'HR_MANAGER' | 'HR_STAFF';
   createdAt: string;
+  companyEmail?: string;
+  companyName?: string;
 }
 
 const DEFAULT_ADMIN_DB: AdminAccountDb = {
@@ -538,6 +540,8 @@ const DEFAULT_ADMIN_DB: AdminAccountDb = {
   password: 'admin',
   role: 'SUPER_ADMIN',
   createdAt: new Date().toISOString(),
+  companyEmail: 'admin@company.com',
+  companyName: 'Visagel Enterprise',
 };
 
 export function getAdminAccountsDb(): AdminAccountDb[] {
@@ -548,7 +552,13 @@ export function getAdminAccountsDb(): AdminAccountDb[] {
   }
   try {
     const list = JSON.parse(val);
-    if (Array.isArray(list) && list.length > 0) return list;
+    if (Array.isArray(list) && list.length > 0) {
+      return list.map((a: AdminAccountDb) => ({
+        ...a,
+        companyEmail: a.companyEmail || (a.loginId === 'admin' ? 'admin@company.com' : undefined),
+        companyName: a.companyName || (a.loginId === 'admin' ? 'Visagel Enterprise' : undefined),
+      }));
+    }
     return [DEFAULT_ADMIN_DB];
   } catch {
     return [DEFAULT_ADMIN_DB];
@@ -564,7 +574,7 @@ export function saveAdminAccountsDb(accounts: AdminAccountDb[]): void {
 export function getAiSettingsDb(): AiModelSettings {
   const val = getKeyValue('ai_settings');
   if (!val) {
-    saveAiSettingsDb(DEFAULT_AI_SETTINGS);
+    setKeyValue('ai_settings', JSON.stringify(DEFAULT_AI_SETTINGS));
     return DEFAULT_AI_SETTINGS;
   }
   try {
@@ -575,9 +585,53 @@ export function getAiSettingsDb(): AiModelSettings {
 }
 
 export function saveAiSettingsDb(settings: Partial<AiModelSettings>): void {
-  const current = getAiSettingsDb();
+  let current = DEFAULT_AI_SETTINGS;
+  const val = getKeyValue('ai_settings');
+  if (val) {
+    try {
+      current = { ...DEFAULT_AI_SETTINGS, ...JSON.parse(val) };
+    } catch {}
+  }
   const updated = { ...current, ...settings };
   setKeyValue('ai_settings', JSON.stringify(updated));
 }
+
+// ── Organisation Platform Provider Account ────────────────────────────────────
+
+export interface OrgPlatformAccount {
+  orgId: string;
+  orgEmail: string;
+  password?: string;
+  isLoggedIn: boolean;
+  providerName: string;
+  connectedAt?: string;
+}
+
+export const DEFAULT_ORG_PLATFORM: OrgPlatformAccount = {
+  orgId: 'BRZ-ORG-8821',
+  orgEmail: 'admin@branzept.com',
+  password: 'admin',
+  isLoggedIn: true,
+  providerName: 'Branzept Cloud Platform',
+  connectedAt: new Date().toISOString(),
+};
+
+export function getOrgPlatformAccountDb(): OrgPlatformAccount {
+  const val = getKeyValue('org_platform_account');
+  if (!val) {
+    saveOrgPlatformAccountDb(DEFAULT_ORG_PLATFORM);
+    return DEFAULT_ORG_PLATFORM;
+  }
+  try {
+    return { ...DEFAULT_ORG_PLATFORM, ...JSON.parse(val) };
+  } catch {
+    return DEFAULT_ORG_PLATFORM;
+  }
+}
+
+export function saveOrgPlatformAccountDb(acc: OrgPlatformAccount): void {
+  setKeyValue('org_platform_account', JSON.stringify(acc));
+}
+
 
 
