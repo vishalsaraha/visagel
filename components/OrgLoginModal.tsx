@@ -10,7 +10,8 @@ import {
   ScrollView,
 } from 'react-native';
 import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
-import { OrgPlatformAccount, saveOrgPlatformAccountDb } from '@/utils/database';
+import { OrgPlatformAccount, saveOrgPlatformAccountDb, logoutOrgPlatformAccountDb } from '@/utils/database';
+import { ThemedAlert } from '@/components/ThemedAlertProvider';
 
 interface OrgLoginModalProps {
   visible: boolean;
@@ -79,6 +80,34 @@ export default function OrgLoginModal({
     onClose();
   };
 
+  const handleLogout = () => {
+    ThemedAlert.alert(
+      'Logout Organisation',
+      'Are you sure you want to end this session and disconnect the Organisation ID?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Logout & Disconnect',
+          style: 'destructive',
+          onPress: () => {
+            const loggedOut = logoutOrgPlatformAccountDb();
+            setOrgEmail('');
+            setOrgId('');
+            setPassword('');
+            onSuccess(loggedOut);
+            onClose();
+            ThemedAlert.alert(
+              'Logged Out',
+              'Organisation ID has been disconnected and cleared.',
+              [{ text: 'OK' }],
+              'info'
+            );
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <Modal
       visible={visible}
@@ -115,6 +144,19 @@ export default function OrgLoginModal({
             <Text style={styles.subtitle}>
               Sign in with Organisation Email, Org ID & Password provided by platform provider
             </Text>
+
+            {/* Active Connected Org Banner */}
+            {initialAccount.isLoggedIn && (
+              <View style={styles.activeOrgConnectedCard}>
+                <MaterialCommunityIcons name="check-decagram" size={15} color="#059669" style={{ marginRight: 6 }} />
+                <View style={{ flex: 1, overflow: 'hidden' }}>
+                  <Text style={styles.activeOrgConnectedTitle}>Active Connected Organisation</Text>
+                  <Text style={styles.activeOrgConnectedText} numberOfLines={1}>
+                    {initialAccount.orgId} · {initialAccount.orgEmail}
+                  </Text>
+                </View>
+              </View>
+            )}
 
             {/* Field 1: Organisation Email */}
             <View style={styles.fieldWrap}>
@@ -215,9 +257,25 @@ export default function OrgLoginModal({
                 onPress={handleOrgLogin}
                 activeOpacity={0.85}
               >
-                <Text style={styles.submitBtnText} numberOfLines={1} adjustsFontSizeToFit>Connect Org</Text>
+                <Text style={styles.submitBtnText} numberOfLines={1} adjustsFontSizeToFit>
+                  {initialAccount.isLoggedIn ? 'Update Credentials' : 'Connect Org'}
+                </Text>
               </TouchableOpacity>
             </View>
+
+            {/* Dedicated Logout & End ID Button */}
+            {initialAccount.isLoggedIn && (
+              <TouchableOpacity
+                style={styles.logoutOrgBtn}
+                onPress={handleLogout}
+                activeOpacity={0.75}
+              >
+                <MaterialCommunityIcons name="logout" size={14} color="#EF4444" style={{ marginRight: 6 }} />
+                <Text style={styles.logoutOrgBtnText} numberOfLines={1} adjustsFontSizeToFit>
+                  Logout & End Organisation ID
+                </Text>
+              </TouchableOpacity>
+            )}
           </ScrollView>
         </View>
       </View>
@@ -394,5 +452,47 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  activeOrgConnectedCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    width: '100%',
+    marginBottom: 12,
+  },
+  activeOrgConnectedTitle: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#047857',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  activeOrgConnectedText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#065F46',
+    marginTop: 1,
+  },
+  logoutOrgBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginTop: 10,
+  },
+  logoutOrgBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#EF4444',
   },
 });

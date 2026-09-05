@@ -56,11 +56,19 @@ export default function AttendanceScreen() {
   // Auto-attendance toggle
   const [autoAttendance, setAutoAttendance] = useState(true);
 
+  const cameraReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isCapturingPhotoRef = useRef(false);
+
   // Stop scanning and clear timer when screen loses focus
   useEffect(() => {
     if (!isFocused) {
       setIsCameraReady(false);
       isScanningRef.current = false;
+      isCapturingPhotoRef.current = false;
+      if (cameraReadyTimeoutRef.current) {
+        clearTimeout(cameraReadyTimeoutRef.current);
+        cameraReadyTimeoutRef.current = null;
+      }
       if (autoScanTimerRef.current) {
         clearTimeout(autoScanTimerRef.current);
         autoScanTimerRef.current = null;
@@ -170,6 +178,16 @@ export default function AttendanceScreen() {
     return () => laserLoopRef.current?.stop();
   }, [scanPhase]);
 
+  const handleCameraReady = useCallback(() => {
+    if (cameraReadyTimeoutRef.current) {
+      clearTimeout(cameraReadyTimeoutRef.current);
+    }
+    // Give native Android CameraX 600ms to complete pipeline binding
+    cameraReadyTimeoutRef.current = setTimeout(() => {
+      setIsCameraReady(true);
+    }, 600);
+  }, []);
+
   // ── Core Scan Logic ────────────────────────────────────────────────────────
   const runScan = useCallback(
     async (isAuto = false) => {
@@ -201,22 +219,38 @@ export default function AttendanceScreen() {
       }
 
       let liveShotUri: string | null = null;
-      try {
-        if (cameraRef.current && isCameraReady) {
+      if (cameraRef.current && isCameraReady && !isCapturingPhotoRef.current) {
+        isCapturingPhotoRef.current = true;
+        try {
           const photo = await cameraRef.current.takePictureAsync({
-            quality: 0.5,
-            shutterSound: false,
+            quality: 0.6,
+            skipProcessing: false,
           });
           liveShotUri = photo?.uri ?? null;
+        } catch (err) {
+          // CameraX transient hardware buffer lock retry
+          try {
+            await delay(350);
+            if (cameraRef.current && isCameraReady) {
+              const retryPhoto = await cameraRef.current.takePictureAsync({
+                quality: 0.5,
+              });
+              liveShotUri = retryPhoto?.uri ?? null;
+            }
+          } catch (retryErr) {
+            if (!isAuto) {
+              console.warn('[AttendanceScreen] Snapshot retry error:', retryErr);
+            }
+          }
+        } finally {
+          isCapturingPhotoRef.current = false;
         }
-      } catch (err) {
-        console.warn('[AttendanceScreen] Snapshot error:', err);
       }
 
       if (!liveShotUri) {
         if (!isAuto) {
           setScanPhase('failed');
-          setStatusMessage('Camera error — Retrying...');
+          setStatusMessage('Camera busy — Retrying...');
           try {
             await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
           } catch (_) {}
@@ -559,8 +593,10 @@ export default function AttendanceScreen() {
                 <CameraView
                   style={StyleSheet.absoluteFillObject}
                   facing="front"
+                  mode="picture"
+                  animateShutter={false}
                   ref={cameraRef}
-                  onCameraReady={() => setIsCameraReady(true)}
+                  onCameraReady={handleCameraReady}
                   onMountError={(e) => {
                     console.warn('[AttendanceScreen] Camera mount error:', e?.message);
                     setIsCameraReady(false);

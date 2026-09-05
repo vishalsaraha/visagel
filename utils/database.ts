@@ -633,5 +633,18 @@ export function saveOrgPlatformAccountDb(acc: OrgPlatformAccount): void {
   setKeyValue('org_platform_account', JSON.stringify(acc));
 }
 
+export function logoutOrgPlatformAccountDb(): OrgPlatformAccount {
+  const loggedOut: OrgPlatformAccount = {
+    orgId: '',
+    orgEmail: '',
+    password: '',
+    isLoggedIn: false,
+    providerName: 'Branzept Cloud Platform',
+    connectedAt: '',
+  };
+  saveOrgPlatformAccountDb(loggedOut);
+  return loggedOut;
+}
+
 
 

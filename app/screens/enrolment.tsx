@@ -129,13 +129,26 @@ export default function EnrolmentScreen() {
   const handleCapturePhoto = async () => {
     if (cameraRef.current) {
       try {
-        const photo = await cameraRef.current.takePictureAsync({ quality: 0.5, shutterSound: false });
+        const photo = await cameraRef.current.takePictureAsync({ quality: 0.6, skipProcessing: false });
         if (photo && photo.uri) {
           setCapturedPhoto(photo.uri);
           setCameraVisible(false);
+          return;
         }
       } catch {
-        ThemedAlert.alert('Capture Error', 'Failed to capture photo. Please try again.', [{ text: 'OK' }], 'error');
+        try {
+          await new Promise((r) => setTimeout(r, 300));
+          if (cameraRef.current) {
+            const retryPhoto = await cameraRef.current.takePictureAsync({ quality: 0.5 });
+            if (retryPhoto && retryPhoto.uri) {
+              setCapturedPhoto(retryPhoto.uri);
+              setCameraVisible(false);
+              return;
+            }
+          }
+        } catch {
+          ThemedAlert.alert('Capture Error', 'Failed to capture photo. Please try again.', [{ text: 'OK' }], 'error');
+        }
       }
     }
   };
@@ -847,7 +860,13 @@ export default function EnrolmentScreen() {
           <StatusBar barStyle="light-content" backgroundColor="#000000" translucent={true} />
           {/* CameraView full screen */}
           {cameraVisible && (
-            <CameraView style={StyleSheet.absoluteFillObject} facing="front" ref={cameraRef} />
+            <CameraView
+              style={StyleSheet.absoluteFillObject}
+              facing="front"
+              mode="picture"
+              animateShutter={false}
+              ref={cameraRef}
+            />
           )}
 
           {/* Absolute Positioned Overlay UI */}

@@ -23,7 +23,7 @@ import * as MailComposer from 'expo-mail-composer';
 import * as FileSystem from 'expo-file-system/legacy';
 import AppDateTimePicker from '@/components/AppDateTimePicker';
 import OrgLoginModal from '@/components/OrgLoginModal';
-import { getOrgPlatformAccountDb, OrgPlatformAccount } from '@/utils/database';
+import { getOrgPlatformAccountDb, saveOrgPlatformAccountDb, logoutOrgPlatformAccountDb, OrgPlatformAccount } from '@/utils/database';
 
 const THEME_COLOR = '#FF6900';
 const THEME_COLOR_10_OPACITY = 'rgba(255, 105, 0, 0.1)';
@@ -120,6 +120,25 @@ export default function SettingsScreen() {
   // Organisation Platform Account (Bottom of Settings)
   const [orgLoginModalVisible, setOrgLoginModalVisible] = useState(false);
   const [orgAccount, setOrgAccount] = useState<OrgPlatformAccount>(() => getOrgPlatformAccountDb());
+
+  const handleOrgLogout = () => {
+    ThemedAlert.alert(
+      'Logout Organisation',
+      'Are you sure you want to end the organisation session and remove the active Organisation ID?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Logout & Disconnect',
+          style: 'destructive',
+          onPress: () => {
+            const loggedOut = logoutOrgPlatformAccountDb();
+            setOrgAccount(loggedOut);
+            ThemedAlert.alert('Organisation Logged Out', 'Organisation ID has been disconnected and cleared.', [{ text: 'OK' }], 'info');
+          },
+        },
+      ]
+    );
+  };
 
   // Shift form fields
   const [formName, setFormName] = useState('');
@@ -815,57 +834,56 @@ export default function SettingsScreen() {
             activeOpacity={0.75}
             onPress={() => setOrgLoginModalVisible(true)}
           >
-            <View style={[styles.iconBox, { backgroundColor: '#FFF7ED' }]}>
-              <MaterialCommunityIcons name="office-building-cog" size={20} color="#FF6900" />
+            <View style={[styles.iconBox, { backgroundColor: orgAccount.isLoggedIn && orgAccount.orgId ? '#FFF7ED' : '#F1F5F9' }]}>
+              <MaterialCommunityIcons
+                name="office-building-cog"
+                size={20}
+                color={orgAccount.isLoggedIn && orgAccount.orgId ? '#FF6900' : '#64748B'}
+              />
             </View>
             <View style={styles.menuInfo}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={styles.menuTitle}>Organisation Login</Text>
-                <View style={[styles.countBadge, { backgroundColor: '#DCFCE7', marginLeft: 6 }]}>
-                  <Text style={[styles.countBadgeText, { color: '#166534' }]}>
-                    {orgAccount.isLoggedIn ? 'Active' : 'Login Required'}
+                <Text style={styles.menuTitle}>Organisation Account</Text>
+                <View style={[styles.countBadge, { backgroundColor: orgAccount.isLoggedIn && orgAccount.orgId ? '#DCFCE7' : '#F1F5F9', marginLeft: 6 }]}>
+                  <Text style={[styles.countBadgeText, { color: orgAccount.isLoggedIn && orgAccount.orgId ? '#166534' : '#64748B' }]}>
+                    {orgAccount.isLoggedIn && orgAccount.orgId ? 'Active' : 'Logged Out'}
                   </Text>
                 </View>
               </View>
               <Text style={styles.menuDescription} numberOfLines={1} ellipsizeMode="tail">
-                Org ID: {orgAccount.orgId} · {orgAccount.orgEmail}
+                {orgAccount.isLoggedIn && orgAccount.orgId
+                  ? `Org ID: ${orgAccount.orgId} · ${orgAccount.orgEmail}`
+                  : 'Tap to sign in with platform provider credentials'}
               </Text>
             </View>
             <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
           </TouchableOpacity>
-        </View>
 
-        {/* Lock Screen Action Card */}
-        <TouchableOpacity
-          style={styles.lockActionCard}
-          activeOpacity={0.8}
-          onPress={() => {
-            ThemedAlert.alert(
-              'Lock Screen',
-              'Lock Admin and return to Attendance Screen?',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Lock',
-                  style: 'destructive',
-                  onPress: () => {
-                    logout();
-                    router.replace('/');
-                  },
-                },
-              ]
-            );
-          }}
-        >
-          <View style={styles.lockIconBox}>
-            <MaterialCommunityIcons name="lock-outline" size={20} color="#EF4444" />
-          </View>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.lockCardTitle}>Lock HR Admin</Text>
-            <Text style={styles.lockCardSubtitle}>Return to attendance scanner</Text>
-          </View>
-          <FontAwesome name="sign-out" size={16} color="#EF4444" />
-        </TouchableOpacity>
+          {orgAccount.isLoggedIn && Boolean(orgAccount.orgId) && (
+            <>
+              <View style={styles.cardDivider} />
+              <View style={{ paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  style={[styles.orgActionMiniBtn, { flex: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' }]}
+                  activeOpacity={0.75}
+                  onPress={() => setOrgLoginModalVisible(true)}
+                >
+                  <MaterialCommunityIcons name="account-edit-outline" size={13} color="#475569" style={{ marginRight: 4 }} />
+                  <Text style={[styles.orgActionMiniText, { color: '#475569' }]} numberOfLines={1}>Change Credentials</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.orgActionMiniBtn, { flex: 1, borderColor: '#FECACA', backgroundColor: '#FEF2F2' }]}
+                  activeOpacity={0.75}
+                  onPress={handleOrgLogout}
+                >
+                  <MaterialCommunityIcons name="logout" size={13} color="#EF4444" style={{ marginRight: 4 }} />
+                  <Text style={[styles.orgActionMiniText, { color: '#EF4444' }]} numberOfLines={1}>Logout Org</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </View>
 
         {/* Footer */}
         <View style={styles.footerContainer}>
@@ -2193,6 +2211,21 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 14,
     marginTop: 20,
+    overflow: 'hidden',
+  },
+  orgActionMiniBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    overflow: 'hidden',
+  },
+  orgActionMiniText: {
+    fontSize: 11.5,
+    fontWeight: '700',
   },
   lockIconBox: {
     width: 38,
