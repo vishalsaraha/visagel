@@ -37,7 +37,10 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#060F1E",
+          "image": "./assets/images/visagel.png",
+          "imageWidth": 200,
           "dark": {
+            "image": "./assets/images/visagel.png",
             "backgroundColor": "#060F1E"
           }
         }
