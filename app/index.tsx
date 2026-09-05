@@ -24,6 +24,7 @@ import { useAttendance } from '@/context/AttendanceContext';
 import AuthPasswordModal from '@/components/AuthPasswordModal';
 import { findBestMatch } from '@/utils/faceMatch';
 import { ThemedAlert } from '@/components/ThemedAlertProvider';
+import { getOrgPlatformAccountDb, deriveCompanyName } from '@/utils/database';
 
 type ScanPhase = 'idle' | 'detecting' | 'aligning' | 'matching' | 'verified' | 'failed';
 
@@ -45,6 +46,7 @@ export default function AttendanceScreen() {
     aiSettings,
   } = useAttendance();
 
+  const [orgAccount] = useState(() => getOrgPlatformAccountDb());
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [authModalVisible, setAuthModalVisible] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
@@ -225,6 +227,7 @@ export default function AttendanceScreen() {
           const photo = await cameraRef.current.takePictureAsync({
             quality: 0.6,
             skipProcessing: false,
+            shutterSound: false,
           });
           liveShotUri = photo?.uri ?? null;
         } catch (err) {
@@ -234,6 +237,7 @@ export default function AttendanceScreen() {
             if (cameraRef.current && isCameraReady) {
               const retryPhoto = await cameraRef.current.takePictureAsync({
                 quality: 0.5,
+                shutterSound: false,
               });
               liveShotUri = retryPhoto?.uri ?? null;
             }
@@ -478,10 +482,14 @@ export default function AttendanceScreen() {
       <View style={styles.headerContainer}>
         <View style={styles.headerTopRow}>
           <View>
-            <View style={styles.companyBadgeRow}>
-              <FontAwesome name="building" size={11} color="#FF6900" style={{ marginRight: 4 }} />
-              <Text style={styles.companyNameText}>Branzept</Text>
-            </View>
+            {orgAccount.isLoggedIn && Boolean(orgAccount.orgId) && (
+              <View style={styles.companyBadgeRow}>
+                <FontAwesome name="building" size={11} color="#FF6900" style={{ marginRight: 4 }} />
+                <Text style={styles.companyNameText} numberOfLines={1}>
+                  {orgAccount.companyName || deriveCompanyName(orgAccount.orgEmail, orgAccount.orgId)}
+                </Text>
+              </View>
+            )}
             <Text style={styles.headerTitle}>Visagel Attendance</Text>
             <View style={styles.headerUnderline} />
           </View>

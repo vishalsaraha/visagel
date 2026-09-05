@@ -23,7 +23,7 @@ import * as MailComposer from 'expo-mail-composer';
 import * as FileSystem from 'expo-file-system/legacy';
 import AppDateTimePicker from '@/components/AppDateTimePicker';
 import OrgLoginModal from '@/components/OrgLoginModal';
-import { getOrgPlatformAccountDb, saveOrgPlatformAccountDb, logoutOrgPlatformAccountDb, OrgPlatformAccount } from '@/utils/database';
+import { getOrgPlatformAccountDb, saveOrgPlatformAccountDb, logoutOrgPlatformAccountDb, deriveCompanyName, OrgPlatformAccount } from '@/utils/database';
 
 const THEME_COLOR = '#FF6900';
 const THEME_COLOR_10_OPACITY = 'rgba(255, 105, 0, 0.1)';
@@ -475,10 +475,14 @@ export default function SettingsScreen() {
       <View style={styles.headerContainer}>
         <View style={styles.headerRow}>
           <View>
-            <View style={styles.companyBadgeRow}>
-              <FontAwesome name="building" size={12} color="#FF6900" style={{ marginRight: 5 }} />
-              <Text style={styles.companyNameText}>Branzept</Text>
-            </View>
+            {orgAccount.isLoggedIn && Boolean(orgAccount.orgId) && (
+              <View style={styles.companyBadgeRow}>
+                <FontAwesome name="building" size={12} color="#FF6900" style={{ marginRight: 5 }} />
+                <Text style={styles.companyNameText} numberOfLines={1}>
+                  {orgAccount.companyName || deriveCompanyName(orgAccount.orgEmail, orgAccount.orgId)}
+                </Text>
+              </View>
+            )}
             <Text style={styles.headerTitle}>Settings</Text>
             <View style={styles.headerUnderline} />
           </View>
@@ -510,20 +514,26 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Company Profile Banner */}
-        <View style={styles.companyBannerCard}>
-          <View style={styles.companyIconLargeBox}>
-            <FontAwesome name="building" size={24} color="#FFFFFF" />
-          </View>
-          <View style={{ flex: 1, marginLeft: 14 }}>
-            <Text style={styles.companyBannerPreTitle}>REGISTERED COMPANY</Text>
-            <Text style={styles.companyBannerMainTitle}>Branzept</Text>
-            <View style={styles.companySystemBadge}>
-              <MaterialCommunityIcons name="shield-check" size={12} color="#059669" style={{ marginRight: 4 }} />
-              <Text style={styles.companySystemBadgeText}>Visagel Attendance System</Text>
+        {/* Company Profile Banner - Visible only when logged in with respective company */}
+        {orgAccount.isLoggedIn && Boolean(orgAccount.orgId) && (
+          <View style={styles.companyBannerCard}>
+            <View style={styles.companyIconLargeBox}>
+              <FontAwesome name="building" size={24} color="#FFFFFF" />
+            </View>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={styles.companyBannerPreTitle}>REGISTERED COMPANY</Text>
+              <Text style={styles.companyBannerMainTitle} numberOfLines={1}>
+                {orgAccount.companyName || deriveCompanyName(orgAccount.orgEmail, orgAccount.orgId)}
+              </Text>
+              <View style={styles.companySystemBadge}>
+                <MaterialCommunityIcons name="shield-check" size={12} color="#059669" style={{ marginRight: 4 }} />
+                <Text style={styles.companySystemBadgeText} numberOfLines={1}>
+                  {orgAccount.orgId} · Visagel Attendance System
+                </Text>
+              </View>
             </View>
           </View>
-        </View>
+        )}
 
         {/* SECTION 1: ATTENDANCE & SHIFTS */}
         <View style={styles.sectionHeaderWrap}>

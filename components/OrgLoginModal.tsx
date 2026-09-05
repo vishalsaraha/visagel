@@ -10,7 +10,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
-import { OrgPlatformAccount, saveOrgPlatformAccountDb, logoutOrgPlatformAccountDb } from '@/utils/database';
+import { OrgPlatformAccount, saveOrgPlatformAccountDb, logoutOrgPlatformAccountDb, deriveCompanyName } from '@/utils/database';
 import { ThemedAlert } from '@/components/ThemedAlertProvider';
 
 interface OrgLoginModalProps {
@@ -28,6 +28,7 @@ export default function OrgLoginModal({
   onSuccess,
   initialAccount,
 }: OrgLoginModalProps) {
+  const [companyName, setCompanyName] = useState<string>('');
   const [orgEmail, setOrgEmail] = useState<string>('');
   const [orgId, setOrgId] = useState<string>('');
   const [password, setPassword] = useState<string>('');
@@ -36,6 +37,7 @@ export default function OrgLoginModal({
 
   useEffect(() => {
     if (visible) {
+      setCompanyName(initialAccount.companyName || '');
       setOrgEmail(initialAccount.orgEmail || '');
       setOrgId(initialAccount.orgId || '');
       setPassword(initialAccount.password || '');
@@ -48,6 +50,7 @@ export default function OrgLoginModal({
     const trimmedEmail = orgEmail.trim();
     const trimmedId = orgId.trim();
     const trimmedPass = password.trim();
+    const trimmedCompany = companyName.trim();
 
     if (!trimmedEmail) {
       setErrorMessage('Please enter Organisation Email');
@@ -66,6 +69,8 @@ export default function OrgLoginModal({
       return;
     }
 
+    const resolvedCompany = trimmedCompany || deriveCompanyName(trimmedEmail, trimmedId);
+
     const updatedAccount: OrgPlatformAccount = {
       orgId: trimmedId,
       orgEmail: trimmedEmail,
@@ -73,6 +78,7 @@ export default function OrgLoginModal({
       isLoggedIn: true,
       providerName: 'Branzept Cloud Platform',
       connectedAt: new Date().toISOString(),
+      companyName: resolvedCompany,
     };
 
     saveOrgPlatformAccountDb(updatedAccount);
@@ -91,6 +97,7 @@ export default function OrgLoginModal({
           style: 'destructive',
           onPress: () => {
             const loggedOut = logoutOrgPlatformAccountDb();
+            setCompanyName('');
             setOrgEmail('');
             setOrgId('');
             setPassword('');
@@ -152,11 +159,32 @@ export default function OrgLoginModal({
                 <View style={{ flex: 1, overflow: 'hidden' }}>
                   <Text style={styles.activeOrgConnectedTitle}>Active Connected Organisation</Text>
                   <Text style={styles.activeOrgConnectedText} numberOfLines={1}>
-                    {initialAccount.orgId} · {initialAccount.orgEmail}
+                    {initialAccount.companyName || deriveCompanyName(initialAccount.orgEmail, initialAccount.orgId)} ({initialAccount.orgId})
                   </Text>
                 </View>
               </View>
             )}
+
+            {/* Field: Company / Organisation Name */}
+            <View style={styles.fieldWrap}>
+              <Text style={styles.fieldLabel}>Company / Organisation Name</Text>
+              <View style={styles.inputWrapper}>
+                <MaterialCommunityIcons name="office-building" size={17} color="#94A3B8" style={{ marginRight: 8 }} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. Branzept"
+                  placeholderTextColor="#94A3B8"
+                  value={companyName}
+                  onChangeText={(text) => {
+                    setCompanyName(text);
+                    setErrorMessage('');
+                  }}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  returnKeyType="next"
+                />
+              </View>
+            </View>
 
             {/* Field 1: Organisation Email */}
             <View style={styles.fieldWrap}>

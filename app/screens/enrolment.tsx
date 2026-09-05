@@ -11,6 +11,7 @@ import {
   Modal,
   FlatList,
   Animated,
+  Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -23,6 +24,7 @@ import * as Sharing from 'expo-sharing';
 import * as MailComposer from 'expo-mail-composer';
 import AppDateTimePicker from '@/components/AppDateTimePicker';
 import { ThemedAlert } from '@/components/ThemedAlertProvider';
+import { getOrgPlatformAccountDb, deriveCompanyName } from '@/utils/database';
 
 const THEME_COLOR = '#FF6900';
 const THEME_COLOR_10_OPACITY = 'rgba(255, 105, 0, 0.1)';
@@ -39,12 +41,16 @@ export default function EnrolmentScreen() {
     departments: contextDepts,
   } = useAttendance();
 
+  const [orgAccount] = useState(() => getOrgPlatformAccountDb());
+
   // Build dept list: always include 'All' at front
   const DEPT_FILTER_LIST = ['All', ...contextDepts] as const;
   type Department = (typeof DEPT_FILTER_LIST)[number];
 
   const [selectedDept, setSelectedDept] = useState<Department>('All');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const searchInputRef = useRef<TextInput>(null);
   const [faceStatusFilter, setFaceStatusFilter] = useState<'All' | 'Mapped' | 'Pending'>('All');
   const [sortBy, setSortBy] = useState<'name' | 'id' | 'recent'>('name');
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
@@ -129,7 +135,11 @@ export default function EnrolmentScreen() {
   const handleCapturePhoto = async () => {
     if (cameraRef.current) {
       try {
-        const photo = await cameraRef.current.takePictureAsync({ quality: 0.6, skipProcessing: false });
+        const photo = await cameraRef.current.takePictureAsync({
+          quality: 0.6,
+          skipProcessing: false,
+          shutterSound: false,
+        });
         if (photo && photo.uri) {
           setCapturedPhoto(photo.uri);
           setCameraVisible(false);
@@ -139,7 +149,10 @@ export default function EnrolmentScreen() {
         try {
           await new Promise((r) => setTimeout(r, 300));
           if (cameraRef.current) {
-            const retryPhoto = await cameraRef.current.takePictureAsync({ quality: 0.5 });
+            const retryPhoto = await cameraRef.current.takePictureAsync({
+              quality: 0.5,
+              shutterSound: false,
+            });
             if (retryPhoto && retryPhoto.uri) {
               setCapturedPhoto(retryPhoto.uri);
               setCameraVisible(false);
@@ -324,11 +337,21 @@ export default function EnrolmentScreen() {
     .filter((item) => {
       const matchesDept = selectedDept === 'All' || item.department === selectedDept;
       const q = searchQuery.trim().toLowerCase();
+      const cleanQ = q.replace(/[^a-z0-9]/g, '');
+      const cleanId = (item.employeeId || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const cleanPhone = (item.phone || '').replace(/[^0-9]/g, '');
+      const cleanPhoneQ = q.replace(/[^0-9]/g, '');
+
       const matchesSearch =
         !q ||
-        item.name.toLowerCase().includes(q) ||
-        item.employeeId.toLowerCase().includes(q) ||
-        item.phone.includes(q);
+        (item.name && item.name.toLowerCase().includes(q)) ||
+        (item.employeeId && item.employeeId.toLowerCase().includes(q)) ||
+        (cleanQ.length > 0 && cleanId.includes(cleanQ)) ||
+        (item.phone && item.phone.toLowerCase().includes(q)) ||
+        (cleanPhoneQ.length > 0 && cleanPhone.includes(cleanPhoneQ)) ||
+        (item.department && item.department.toLowerCase().includes(q)) ||
+        (item.joiningDate && item.joiningDate.toLowerCase().includes(q));
+
       const matchesFace =
         faceStatusFilter === 'All' ||
         (faceStatusFilter === 'Mapped' && Boolean(item.photoUri)) ||
@@ -374,10 +397,14 @@ export default function EnrolmentScreen() {
       <View style={styles.headerContainer}>
         <View style={styles.headerRow}>
           <View>
-            <View style={styles.companyBadgeRow}>
-              <FontAwesome name="building" size={12} color="#FF6900" style={{ marginRight: 5 }} />
-              <Text style={styles.companyNameText}>Branzept</Text>
-            </View>
+            {orgAccount.isLoggedIn && Boolean(orgAccount.orgId) && (
+              <View style={styles.companyBadgeRow}>
+                <FontAwesome name="building" size={12} color="#FF6900" style={{ marginRight: 5 }} />
+                <Text style={styles.companyNameText} numberOfLines={1}>
+                  {orgAccount.companyName || deriveCompanyName(orgAccount.orgEmail, orgAccount.orgId)}
+                </Text>
+              </View>
+            )}
             <Text style={styles.headerTitle}>Enrolment</Text>
             <View style={styles.headerUnderline} />
           </View>
@@ -411,21 +438,45 @@ export default function EnrolmentScreen() {
       {/* Search Input Bar with Expandable Filter Icon */}
       <View style={styles.searchBarWrap}>
         <View style={styles.searchAndFilterRow}>
-          <View style={styles.searchBox}>
-            <FontAwesome name="search" size={13} color="#94A3B8" style={{ marginRight: 8 }} />
+          <Pressable
+            style={[styles.searchBox, isSearchFocused && styles.searchBoxFocused]}
+            onPress={() => searchInputRef.current?.focus()}
+          >
+            <FontAwesome
+              name="search"
+              size={13}
+              color={searchQuery || isSearchFocused ? THEME_COLOR : '#94A3B8'}
+              style={{ marginRight: 8 }}
+            />
             <TextInput
+              ref={searchInputRef}
               style={styles.searchInput}
-              placeholder="Search name, ID, phone..."
+              placeholder="Search name, ID, phone, dept..."
               placeholderTextColor="#94A3B8"
               value={searchQuery}
               onChangeText={setSearchQuery}
+              onFocus={() => setIsSearchFocused(true)}
+              onBlur={() => setIsSearchFocused(false)}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+              selectionColor={THEME_COLOR}
+              cursorColor={THEME_COLOR}
+              editable={true}
             />
-            {searchQuery ? (
-              <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <FontAwesome name="times-circle" size={13} color="#94A3B8" />
+            {Boolean(searchQuery) && (
+              <TouchableOpacity
+                onPress={() => {
+                  setSearchQuery('');
+                  searchInputRef.current?.focus();
+                }}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                style={{ padding: 4 }}
+              >
+                <FontAwesome name="times-circle" size={15} color="#64748B" />
               </TouchableOpacity>
-            ) : null}
-          </View>
+            )}
+          </Pressable>
 
           <TouchableOpacity
             style={[
@@ -568,8 +619,12 @@ export default function EnrolmentScreen() {
       {/* List View */}
       <View style={styles.listContainer}>
         <View style={styles.listHeaderRow}>
-          <Text style={styles.sectionSubTitle}>
-            {selectedDept === 'All' ? 'All Employees' : `${selectedDept} Department`} ({filteredList.length})
+          <Text style={styles.sectionSubTitle} numberOfLines={1}>
+            {searchQuery
+              ? `Results for "${searchQuery}" (${filteredList.length})`
+              : selectedDept === 'All'
+              ? `All Employees (${filteredList.length})`
+              : `${selectedDept} Department (${filteredList.length})`}
           </Text>
           <TouchableOpacity onPress={handleOpenAddModal} style={styles.quickAddBtn}>
             <FontAwesome name="plus" size={12} color="#FF6900" style={{ marginRight: 4 }} />
@@ -582,8 +637,29 @@ export default function EnrolmentScreen() {
             <MaterialCommunityIcons name="account-search-outline" size={48} color="#CBD5E1" />
             <Text style={styles.emptyTitle}>No Employees Found</Text>
             <Text style={styles.emptySubtitle}>
-              {searchQuery ? `No results for "${searchQuery}"` : `No employees registered in ${selectedDept}.`}
+              {searchQuery
+                ? `No employees matching "${searchQuery}". Try a different name, ID, or phone.`
+                : `No employees registered in ${selectedDept}.`}
             </Text>
+            {searchQuery ? (
+              <TouchableOpacity
+                style={styles.clearSearchBtn}
+                onPress={() => setSearchQuery('')}
+                activeOpacity={0.8}
+              >
+                <FontAwesome name="times" size={11} color={THEME_COLOR} style={{ marginRight: 6 }} />
+                <Text style={styles.clearSearchBtnText}>Clear Search</Text>
+              </TouchableOpacity>
+            ) : hasActiveFilters ? (
+              <TouchableOpacity
+                style={styles.clearSearchBtn}
+                onPress={handleResetFilters}
+                activeOpacity={0.8}
+              >
+                <MaterialCommunityIcons name="filter-remove-outline" size={13} color={THEME_COLOR} style={{ marginRight: 6 }} />
+                <Text style={styles.clearSearchBtnText}>Reset All Filters</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         ) : (
           <FlatList
@@ -984,16 +1060,27 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1F5F9',
     borderRadius: 12,
     paddingHorizontal: 12,
-    height: 42,
-    borderWidth: 1,
+    height: 44,
+    borderWidth: 1.5,
     borderColor: '#E2E8F0',
+  },
+  searchBoxFocused: {
+    borderColor: THEME_COLOR,
+    backgroundColor: '#FFFFFF',
+    shadowColor: THEME_COLOR,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 2,
   },
   searchInput: {
     flex: 1,
-    fontSize: 12.5,
+    fontSize: 13,
     color: '#0F172A',
     fontWeight: '500',
-    paddingVertical: 0,
+    height: 44,
+    paddingVertical: 8,
+    paddingHorizontal: 0,
   },
   filterToggleBtn: {
     width: 42,
@@ -1234,6 +1321,23 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     marginTop: 4,
     textAlign: 'center',
+  },
+  clearSearchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginTop: 14,
+  },
+  clearSearchBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: THEME_COLOR,
   },
   employeeCard: {
     backgroundColor: '#FFFFFF',

@@ -16,6 +16,7 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { useAttendance, EmployeeAttendance } from '@/context/AttendanceContext';
 import { ThemedAlert } from '@/components/ThemedAlertProvider';
+import { getOrgPlatformAccountDb, deriveCompanyName } from '@/utils/database';
 import * as Calendar from 'expo-calendar';
 import * as Sharing from 'expo-sharing';
 import * as MailComposer from 'expo-mail-composer';
@@ -28,6 +29,7 @@ export default function DashboardScreen() {
   const router = useRouter();
   const { logout, currentUser } = useAuth();
   const { attendanceRecords, multipleTimeEntries, recordPunch, removePunch, departments } = useAttendance();
+  const [orgAccount] = useState(() => getOrgPlatformAccountDb());
   const [date, setDate] = useState(new Date());
   const [showPicker, setShowPicker] = useState(false);
   const [selectedEmpPunches, setSelectedEmpPunches] = useState<EmployeeAttendance | null>(null);
@@ -287,10 +289,14 @@ export default function DashboardScreen() {
       <View style={styles.headerContainer}>
         <View style={styles.headerRow}>
           <View>
-            <View style={styles.companyBadgeRow}>
-              <FontAwesome name="building" size={12} color="#FF6900" style={{ marginRight: 5 }} />
-              <Text style={styles.companyNameText}>Branzept</Text>
-            </View>
+            {orgAccount.isLoggedIn && Boolean(orgAccount.orgId) && (
+              <View style={styles.companyBadgeRow}>
+                <FontAwesome name="building" size={12} color="#FF6900" style={{ marginRight: 5 }} />
+                <Text style={styles.companyNameText} numberOfLines={1}>
+                  {orgAccount.companyName || deriveCompanyName(orgAccount.orgEmail, orgAccount.orgId)}
+                </Text>
+              </View>
+            )}
             <Text style={styles.headerTitle}>Attendance Report</Text>
             <View style={styles.headerUnderline} />
           </View>

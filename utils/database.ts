@@ -605,6 +605,7 @@ export interface OrgPlatformAccount {
   isLoggedIn: boolean;
   providerName: string;
   connectedAt?: string;
+  companyName?: string;
 }
 
 export const DEFAULT_ORG_PLATFORM: OrgPlatformAccount = {
@@ -614,7 +615,18 @@ export const DEFAULT_ORG_PLATFORM: OrgPlatformAccount = {
   isLoggedIn: true,
   providerName: 'Branzept Cloud Platform',
   connectedAt: new Date().toISOString(),
+  companyName: 'Branzept',
 };
+
+export function deriveCompanyName(email?: string, orgId?: string): string {
+  if (!email || !email.includes('@')) {
+    return orgId || 'Organisation';
+  }
+  const domain = email.split('@')[1] || '';
+  const namePart = domain.split('.')[0] || '';
+  if (!namePart) return orgId || 'Organisation';
+  return namePart.charAt(0).toUpperCase() + namePart.slice(1);
+}
 
 export function getOrgPlatformAccountDb(): OrgPlatformAccount {
   const val = getKeyValue('org_platform_account');
@@ -641,6 +653,7 @@ export function logoutOrgPlatformAccountDb(): OrgPlatformAccount {
     isLoggedIn: false,
     providerName: 'Branzept Cloud Platform',
     connectedAt: '',
+    companyName: '',
   };
   saveOrgPlatformAccountDb(loggedOut);
   return loggedOut;
