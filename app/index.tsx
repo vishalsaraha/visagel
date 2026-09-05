@@ -39,17 +39,21 @@ export default function AttendanceScreen() {
     attendanceRecords,
     enrolledEmployees,
     getActiveShift,
+    aiSettings,
   } = useAttendance();
 
   const [authModalVisible, setAuthModalVisible] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
   const [currentDateStr, setCurrentDateStr] = useState('');
   const [scanPhase, setScanPhase] = useState<ScanPhase>('idle');
-  const [statusMessage, setStatusMessage] = useState('Face scanner ready');
+  const [statusMessage, setStatusMessage] = useState('Waiting for face...');
   const [faceConfidence, setFaceConfidence] = useState(0);
 
   // Auto-attendance toggle
   const [autoAttendance, setAutoAttendance] = useState(true);
+
+  // Cooldown tracker per employee ID (timestamp of last punch)
+  const lastPunchMapRef = useRef<Record<string, number>>({});
 
   const [lastScanned, setLastScanned] = useState<{
     id: string;
@@ -183,12 +187,7 @@ export default function AttendanceScreen() {
       try {
         if (cameraRef.current) {
           const photo = await cameraRef.current.takePictureAsync({
-            quality: 0.1,
-            skipProcessing: true,
-            exif: false,
-            mute: true,
-            shutterSound: false,
-            animateShutter: false,
+            quality: 0.7,
           });
           liveShotUri = photo?.uri ?? null;
         }
@@ -217,11 +216,15 @@ export default function AttendanceScreen() {
 
       if (!isAuto) {
         setScanPhase('aligning');
-        setStatusMessage('Aligning biometrics...');
+        setStatusMessage('Analyzing biometric liveness...');
         await delay(200);
 
         setScanPhase('matching');
-        setStatusMessage('Matching employee face...');
+        setStatusMessage(
+          aiSettings.modelEngine === 'cloud'
+            ? 'Querying Cloud Face AI Engine...'
+            : 'Matching 128-d Biometric Vectors...'
+        );
         Animated.timing(progressAnim, {
           toValue: 0.7,
           duration: 400,
@@ -230,9 +233,20 @@ export default function AttendanceScreen() {
         }).start();
       }
 
-      // Match face against enrolled pool
+      // Match face against enrolled pool using Industry-Standard Face Engine
       const photoUris = pool.map((e) => e.photoUri as string);
-      const { index, confidence, isCovered } = await findBestMatch(liveShotUri, photoUris);
+      const matchResult = await findBestMatch(liveShotUri, photoUris, {
+        minConfidence: aiSettings.minConfidence,
+        livenessMode: aiSettings.livenessMode,
+        modelEngine: aiSettings.modelEngine,
+        cloudConfig: {
+          url: aiSettings.cloudApiUrl,
+          apiKey: aiSettings.cloudApiKey,
+          apiSecret: aiSettings.cloudApiSecret,
+        },
+      });
+
+      const { index, confidence, isCovered, livenessPassed, livenessReason } = matchResult;
 
       if (!isAuto) {
         Animated.timing(progressAnim, {
@@ -244,15 +258,15 @@ export default function AttendanceScreen() {
       }
       setFaceConfidence(confidence);
 
-      // Check if match threshold met
-      if (index === -1 || confidence < MIN_CONFIDENCE || isCovered) {
+      // Check if match threshold or liveness verification failed
+      if (index === -1 || confidence < aiSettings.minConfidence || isCovered || !livenessPassed) {
         if (!isAuto) {
           setScanPhase('failed');
-          setStatusMessage(
-            isCovered
-              ? 'Camera covered or too dark'
-              : `No face match (${confidence}%) — Try again`
-          );
+          let failMsg = `No face match (${confidence}%) — Try again`;
+          if (isCovered) failMsg = 'Camera covered or too dark';
+          else if (!livenessPassed) failMsg = livenessReason || 'Liveness check failed (Spoof risk)';
+
+          setStatusMessage(failMsg);
           try {
             await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
           } catch (_) {}
@@ -260,11 +274,18 @@ export default function AttendanceScreen() {
           setTimeout(() => {
             setScanPhase('idle');
             setFaceConfidence(0);
-            setStatusMessage(autoAttendance ? 'Auto-scanning for faces...' : 'Face scanner ready');
+            setStatusMessage(autoAttendance ? 'Waiting for face...' : 'Face scanner ready');
             isScanningRef.current = false;
           }, 2000);
         } else {
-          // In auto mode, quietly ignore low confidence / non-faces and schedule next scan
+          // In auto mode, quietly update status and schedule next scan
+          if (isCovered) {
+            setStatusMessage('Waiting for face...');
+          } else if (!livenessPassed) {
+            setStatusMessage('Position face in frame...');
+          } else if (index === -1) {
+            setStatusMessage('Scanning face...');
+          }
           isScanningRef.current = false;
           scheduleNextAutoScan();
         }
@@ -273,8 +294,28 @@ export default function AttendanceScreen() {
 
       // Successful Match!
       const matchedEmp = pool[index];
+      const empId = matchedEmp.employeeId;
+
+      // Check Cooldown Window to prevent duplicate punches
+      const nowTs = Date.now();
+      const lastPunchTs = lastPunchMapRef.current[empId] || 0;
+      const cooldownMs = (aiSettings.scanCooldownSec || 30) * 1000;
+
+      if (nowTs - lastPunchTs < cooldownMs) {
+        if (!isAuto) {
+          setScanPhase('verified');
+          setStatusMessage(`${matchedEmp.name} scanned recently (Cooldown active)`);
+        }
+        isScanningRef.current = false;
+        if (isAuto) scheduleNextAutoScan();
+        return;
+      }
+
+      // Update cooldown tracker
+      lastPunchMapRef.current[empId] = nowTs;
+
       setScanPhase('verified');
-      setStatusMessage(`Verified: ${matchedEmp.name} (${confidence}%)`);
+      setStatusMessage(`Verified: ${matchedEmp.name} (${confidence}% match)`);
 
       try {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -300,14 +341,14 @@ export default function AttendanceScreen() {
       setTimeout(() => {
         setScanPhase('idle');
         setFaceConfidence(0);
-        setStatusMessage(autoAttendance ? 'Auto-scanning for faces...' : 'Face scanner ready');
+        setStatusMessage(autoAttendance ? 'Waiting for face...' : 'Face scanner ready');
         isScanningRef.current = false;
         if (autoAttendance) {
           scheduleNextAutoScan();
         }
       }, 3500);
     },
-    [enrolledEmployees, attendanceRecords, autoAttendance]
+    [enrolledEmployees, attendanceRecords, autoAttendance, aiSettings]
   );
 
   const runScanRef = useRef(runScan);

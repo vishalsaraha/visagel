@@ -46,54 +46,24 @@ const AuthContext = createContext<AuthContextType>({
   logout: () => {},
 });
 
+import { getAdminAccountsDb, saveAdminAccountsDb } from '@/utils/database';
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [adminAccounts, setAdminAccounts] = useState<AdminAccount[]>([DEFAULT_ADMIN]);
+  const [adminAccounts, setAdminAccounts] = useState<AdminAccount[]>([]);
   const [currentUser, setCurrentUser] = useState<AdminAccount | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
   useEffect(() => {
-    (async () => {
-      try {
-        if (PASSWORD_FILE) {
-          const info = await FileSystem.getInfoAsync(PASSWORD_FILE);
-          if (info.exists) {
-            const content = await FileSystem.readAsStringAsync(PASSWORD_FILE);
-            const data = JSON.parse(content);
-            if (Array.isArray(data?.accounts) && data.accounts.length > 0) {
-              setAdminAccounts(data.accounts);
-            } else if (data?.adminPassword) {
-              // Backward compatibility migration
-              const singleAcc: AdminAccount = {
-                id: 'admin-root',
-                name: 'Main Admin',
-                loginId: 'admin',
-                password: data.adminPassword,
-                role: 'SUPER_ADMIN',
-                createdAt: new Date().toISOString(),
-              };
-              setAdminAccounts([singleAcc]);
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Failed to load stored admin accounts', e);
-      }
-    })();
+    try {
+      setAdminAccounts(getAdminAccountsDb());
+    } catch (e) {
+      console.warn('Failed to load stored admin accounts from SQLite', e);
+    }
   }, []);
 
   const persistAccounts = async (accounts: AdminAccount[]) => {
     setAdminAccounts(accounts);
-    try {
-      if (PASSWORD_FILE) {
-        await FileSystem.writeAsStringAsync(
-          PASSWORD_FILE,
-          JSON.stringify({ accounts }),
-          { encoding: 'utf8' }
-        );
-      }
-    } catch (e) {
-      console.warn('Failed to persist admin accounts', e);
-    }
+    saveAdminAccountsDb(accounts);
   };
 
   const verifyPassword = (password: string, loginId?: string): { success: boolean; user?: AdminAccount } => {

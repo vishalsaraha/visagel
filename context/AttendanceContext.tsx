@@ -1,60 +1,30 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import * as FileSystem from 'expo-file-system/legacy';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+export {
+  CustomField,
+  AiModelSettings,
+  EnrolledEmployee,
+  PunchRecord,
+  EmployeeAttendance,
+  ShiftEntry,
+  DEFAULT_AI_SETTINGS,
+  DEFAULT_DEPARTMENTS,
+  DEFAULT_SHIFTS,
+} from '@/utils/database';
 
-export interface CustomField {
-  id: string;
-  label: string;
-  key: string;
-  inputType: 'text' | 'phone' | 'number' | 'email';
-  isRequired: boolean;
-}
+import {
+  CustomField,
+  AiModelSettings,
+  EnrolledEmployee,
+  PunchRecord,
+  EmployeeAttendance,
+  ShiftEntry,
+  DEFAULT_AI_SETTINGS,
+  DEFAULT_DEPARTMENTS,
+  DEFAULT_SHIFTS,
+} from '@/utils/database';
 
-export interface EnrolledEmployee {
-  id: string;
-  employeeId: string;
-  name: string;
-  department: string;
-  phone: string;
-  joiningDate: string;
-  photoUri: string | null;
-  customData?: Record<string, string>;
-}
-
-export interface PunchRecord {
-  id: string;
-  type: 'IN' | 'OUT';
-  time: string;
-  timestamp: number;
-}
-
-export interface EmployeeAttendance {
-  id: string;
-  employeeId: string;
-  name: string;
-  department?: string;
-  date: string;
-  punches: PunchRecord[];
-  totalWorkingHours?: string;
-  status: 'PRESENT' | 'LATE' | 'HALF_DAY';
-}
-
-export interface ShiftEntry {
-  id: string;
-  name: string;
-  /** Hours (0-23) */
-  startHour: number;
-  startMin: number;
-  endHour: number;
-  endMin: number;
-  /** After this time employees are counted as late */
-  lateCutoffHour: number;
-  lateCutoffMin: number;
-  isActive: boolean;
-}
-
-interface AttendanceContextType {
+export interface AttendanceContextType {
   multipleTimeEntries: boolean;
   setMultipleTimeEntries: (enabled: boolean) => Promise<void>;
   attendanceRecords: EmployeeAttendance[];
@@ -70,42 +40,20 @@ interface AttendanceContextType {
   shifts: ShiftEntry[];
   saveShifts: (shifts: ShiftEntry[]) => Promise<void>;
   getActiveShift: () => ShiftEntry | null;
-  /** Determine whether current time is IN or OUT based on active shift */
   getPunchTypeFromShift: () => 'IN' | 'OUT';
-  // ── Dynamic Departments ─────────────────────────────────────────────────
   departments: string[];
   saveDepartments: (depts: string[]) => Promise<void>;
-  // ── Custom Enrolment Fields ──────────────────────────────────────────────
   customFields: CustomField[];
   saveCustomFields: (fields: CustomField[]) => Promise<void>;
+  aiSettings: AiModelSettings;
+  saveAiSettings: (settings: Partial<AiModelSettings>) => Promise<void>;
 }
 
-// ── Storage paths ─────────────────────────────────────────────────────────────
-
-const base = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
-const STORAGE_FILE   = `${base}visagel_attendance_data.json`;
-const SETTINGS_FILE  = `${base}visagel_attendance_settings.json`;
-const EMPLOYEES_FILE = `${base}visagel_enrolled_employees.json`;
-const SHIFTS_FILE    = `${base}visagel_shifts.json`;
-const DEPTS_FILE     = `${base}visagel_departments.json`;
-const FIELDS_FILE    = `${base}visagel_custom_fields.json`;
-
-// ── Defaults ──────────────────────────────────────────────────────────────────
-
-export const DEFAULT_DEPARTMENTS: string[] = [
-  'Engineering', 'HR & Admin', 'Design', 'Marketing', 'Finance', 'Operations',
-];
-
-const DEFAULT_ENROLLED: EnrolledEmployee[] = [
+export const DEFAULT_ENROLLED: EnrolledEmployee[] = [
   { id: '1', employeeId: 'BR-001', name: 'Ravi Kiran',    department: 'Engineering', phone: '9876543200', joiningDate: '2026-07-15', photoUri: null },
   { id: '2', employeeId: 'BR-026', name: 'John Doe',      department: 'Engineering', phone: '9876543210', joiningDate: '2026-08-01', photoUri: null },
   { id: '3', employeeId: 'BR-027', name: 'Sarah Connor',  department: 'Design',       phone: '9876543211', joiningDate: '2026-08-10', photoUri: null },
   { id: '4', employeeId: 'BR-028', name: 'Michael Scott', department: 'HR & Admin',  phone: '9876543212', joiningDate: '2026-08-12', photoUri: null },
-];
-
-export const DEFAULT_SHIFTS: ShiftEntry[] = [
-  { id: '1', name: 'Day Shift',   startHour: 9,  startMin: 0, endHour: 18, endMin: 0, lateCutoffHour: 9,  lateCutoffMin: 30, isActive: true  },
-  { id: '2', name: 'Night Shift', startHour: 21, startMin: 0, endHour: 6,  endMin: 0, lateCutoffHour: 21, lateCutoffMin: 30, isActive: false },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -199,104 +147,118 @@ const AttendanceContext = createContext<AttendanceContextType>({
   saveDepartments: async () => {},
   customFields: [],
   saveCustomFields: async () => {},
+  aiSettings: DEFAULT_AI_SETTINGS,
+  saveAiSettings: async () => {},
 });
 
 // ── Provider ──────────────────────────────────────────────────────────────────
 
+import {
+  getEmployeesDb,
+  saveEmployeeDb,
+  deleteEmployeeDb,
+  getAttendanceRecordsDb,
+  saveAttendanceRecordDb,
+  removePunchDb,
+  clearAllAttendanceDb,
+  getShiftsDb,
+  saveShiftsDb,
+  getDepartmentsDb,
+  saveDepartmentsDb,
+  getCustomFieldsDb,
+  saveCustomFieldsDb,
+  getAiSettingsDb,
+  saveAiSettingsDb,
+  getKeyValue,
+  setKeyValue,
+} from '@/utils/database';
+
 export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [multipleTimeEntries, setMultipleTimeEntriesState] = useState(true);
-  const [attendanceRecords, setAttendanceRecords] = useState<EmployeeAttendance[]>(INITIAL_RECORDS);
-  const [enrolledEmployees, setEnrolledEmployees] = useState<EnrolledEmployee[]>(DEFAULT_ENROLLED);
+  const [attendanceRecords, setAttendanceRecords] = useState<EmployeeAttendance[]>([]);
+  const [enrolledEmployees, setEnrolledEmployees] = useState<EnrolledEmployee[]>([]);
   const [shifts, setShiftsState] = useState<ShiftEntry[]>(DEFAULT_SHIFTS);
   const [departments, setDepartmentsState] = useState<string[]>(DEFAULT_DEPARTMENTS);
   const [customFields, setCustomFieldsState] = useState<CustomField[]>([]);
+  const [aiSettings, setAiSettingsState] = useState<AiModelSettings>(DEFAULT_AI_SETTINGS);
 
-  // Load persisted data on mount
+  // Load SQLite database on mount
   useEffect(() => {
-    (async () => {
-      try {
-        const loadJson = async (path: string) => {
-          const info = await FileSystem.getInfoAsync(path);
-          if (!info.exists) return null;
-          return JSON.parse(await FileSystem.readAsStringAsync(path));
-        };
-
-        const settings = await loadJson(SETTINGS_FILE);
-        if (typeof settings?.multipleTimeEntries === 'boolean') {
-          setMultipleTimeEntriesState(settings.multipleTimeEntries);
-        }
-
-        const records = await loadJson(STORAGE_FILE);
-        if (Array.isArray(records) && records.length > 0) setAttendanceRecords(records);
-
-        const emps = await loadJson(EMPLOYEES_FILE);
-        if (Array.isArray(emps) && emps.length > 0) setEnrolledEmployees(emps);
-
-        const savedShifts = await loadJson(SHIFTS_FILE);
-        if (Array.isArray(savedShifts) && savedShifts.length > 0) setShiftsState(savedShifts);
-
-        const savedDepts = await loadJson(DEPTS_FILE);
-        if (Array.isArray(savedDepts) && savedDepts.length > 0) setDepartmentsState(savedDepts);
-
-        const savedFields = await loadJson(FIELDS_FILE);
-        if (Array.isArray(savedFields)) setCustomFieldsState(savedFields);
-      } catch (e) {
-        console.warn('[AttendanceContext] Load error', e);
-      }
-    })();
-  }, []);
-
-  const writeJson = async (path: string, data: unknown) => {
     try {
-      await FileSystem.writeAsStringAsync(path, JSON.stringify(data), { encoding: 'utf8' });
+      const multVal = getKeyValue('multiple_time_entries');
+      if (multVal !== null) {
+        setMultipleTimeEntriesState(multVal === 'true');
+      }
+
+      setEnrolledEmployees(getEmployeesDb());
+      setAttendanceRecords(getAttendanceRecordsDb());
+      setShiftsState(getShiftsDb());
+      setDepartmentsState(getDepartmentsDb());
+      setCustomFieldsState(getCustomFieldsDb());
+      setAiSettingsState(getAiSettingsDb());
     } catch (e) {
-      console.warn('[AttendanceContext] Write error', e);
+      console.warn('[AttendanceContext] SQLite load error', e);
     }
-  };
+  }, []);
 
   const saveSettings = async (enabled: boolean) => {
     setMultipleTimeEntriesState(enabled);
-    await writeJson(SETTINGS_FILE, { multipleTimeEntries: enabled });
+    setKeyValue('multiple_time_entries', enabled ? 'true' : 'false');
+  };
+
+  const saveAiSettings = async (updates: Partial<AiModelSettings>) => {
+    const updated = { ...aiSettings, ...updates };
+    setAiSettingsState(updated);
+    saveAiSettingsDb(updates);
   };
 
   const saveRecords = async (records: EmployeeAttendance[]) => {
     setAttendanceRecords(records);
-    await writeJson(STORAGE_FILE, records);
+    for (const rec of records) {
+      saveAttendanceRecordDb(rec);
+    }
   };
 
   const saveEnrolledEmployees = async (employees: EnrolledEmployee[]) => {
     setEnrolledEmployees(employees);
-    await writeJson(EMPLOYEES_FILE, employees);
+    for (const emp of employees) {
+      saveEmployeeDb(emp);
+    }
   };
 
   const saveShifts = async (newShifts: ShiftEntry[]) => {
     setShiftsState(newShifts);
-    await writeJson(SHIFTS_FILE, newShifts);
+    saveShiftsDb(newShifts);
   };
 
   const saveDepartments = async (depts: string[]) => {
     setDepartmentsState(depts);
-    await writeJson(DEPTS_FILE, depts);
+    saveDepartmentsDb(depts);
   };
 
   const saveCustomFields = async (fields: CustomField[]) => {
     setCustomFieldsState(fields);
-    await writeJson(FIELDS_FILE, fields);
+    saveCustomFieldsDb(fields);
   };
 
   const addEnrolledEmployee = async (emp: Omit<EnrolledEmployee, 'id'>): Promise<boolean> => {
     const newEmp: EnrolledEmployee = { ...emp, id: Date.now().toString() };
-    await saveEnrolledEmployees([newEmp, ...enrolledEmployees]);
+    saveEmployeeDb(newEmp);
+    setEnrolledEmployees((prev) => [newEmp, ...prev]);
     return true;
   };
 
   const updateEnrolledEmployee = async (id: string, updates: Partial<EnrolledEmployee>): Promise<boolean> => {
-    await saveEnrolledEmployees(enrolledEmployees.map((e) => (e.id === id ? { ...e, ...updates } : e)));
+    const updatedList = enrolledEmployees.map((e) => (e.id === id ? { ...e, ...updates } : e));
+    setEnrolledEmployees(updatedList);
+    const target = updatedList.find((e) => e.id === id);
+    if (target) saveEmployeeDb(target);
     return true;
   };
 
   const deleteEnrolledEmployee = async (id: string): Promise<boolean> => {
-    await saveEnrolledEmployees(enrolledEmployees.filter((e) => e.id !== id));
+    deleteEmployeeDb(id);
+    setEnrolledEmployees((prev) => prev.filter((e) => e.id !== id));
     return true;
   };
 
@@ -373,14 +335,14 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   const removePunch = async (employeeId: string, date: string, punchId: string): Promise<void> => {
-    const updated = attendanceRecords.map((r) => {
-      if (r.employeeId !== employeeId || r.date !== date) return r;
-      return { ...r, punches: r.punches.filter((p) => p.id !== punchId) };
-    }).filter((r) => r.punches.length > 0); // remove the record entirely if no punches left
-    await saveRecords(updated);
+    removePunchDb(employeeId, date, punchId);
+    setAttendanceRecords(getAttendanceRecordsDb());
   };
 
-  const clearAllRecords = async () => saveRecords([]);
+  const clearAllRecords = async () => {
+    clearAllAttendanceDb();
+    setAttendanceRecords([]);
+  };
 
   const getRecordsForDate = (dateStr: string) =>
     attendanceRecords.filter((r) => r.date === dateStr);
@@ -408,6 +370,8 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         saveDepartments,
         customFields,
         saveCustomFields,
+        aiSettings,
+        saveAiSettings,
       }}
     >
       {children}
