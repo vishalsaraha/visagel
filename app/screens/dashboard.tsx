@@ -16,7 +16,8 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { useAttendance, EmployeeAttendance } from '@/context/AttendanceContext';
 import { ThemedAlert } from '@/components/ThemedAlertProvider';
-import { getOrgPlatformAccountDb, deriveCompanyName } from '@/utils/database';
+import { getOrgPlatformAccountDb, deriveCompanyName, getKeyValue } from '@/utils/database';
+import { formatLocalDate } from '@/utils/clockSync';
 import * as Calendar from 'expo-calendar';
 import * as Sharing from 'expo-sharing';
 import * as MailComposer from 'expo-mail-composer';
@@ -27,15 +28,32 @@ const THEME_COLOR = '#FF6900';
 
 export default function DashboardScreen() {
   const router = useRouter();
-  const { logout, currentUser } = useAuth();
-  const { attendanceRecords, multipleTimeEntries, recordPunch, removePunch, departments } = useAttendance();
+  const { currentUser, logout } = useAuth();
+  const {
+    attendanceRecords,
+    multipleTimeEntries,
+    recordPunch,
+    removePunch,
+    departments,
+    enrolledEmployees,
+    leaves,
+    deleteLeave,
+    markEmployeeLeave,
+  } = useAttendance();
   const [orgAccount] = useState(() => getOrgPlatformAccountDb());
   const [date, setDate] = useState(new Date());
   const [showPicker, setShowPicker] = useState(false);
   const [selectedEmpPunches, setSelectedEmpPunches] = useState<EmployeeAttendance | null>(null);
+  const [selectedEmpForHistory, setSelectedEmpForHistory] = useState<EmployeeAttendance | null>(null);
+  const [leaveModalVisible, setLeaveModalVisible] = useState(false);
+  const [newLeaveEmpId, setNewLeaveEmpId] = useState('');
+  const [newLeaveType, setNewLeaveType] = useState<'Casual' | 'Sick' | 'Earned' | 'Unpaid'>('Casual');
+  const [newLeaveStart, setNewLeaveStart] = useState(formatLocalDate(new Date()));
+  const [newLeaveEnd, setNewLeaveEnd] = useState(formatLocalDate(new Date()));
+  const [newLeaveReason, setNewLeaveReason] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDept, setSelectedDept] = useState('All');
-  const [selectedStatus, setSelectedStatus] = useState<'All' | 'Present' | 'Late' | 'Half Day'>('All');
+  const [selectedStatus, setSelectedStatus] = useState<'All' | 'Present' | 'Late' | 'Half Day' | 'On Leave'>('All');
   const [selectedPunchType, setSelectedPunchType] = useState<'All' | 'IN Only' | 'OUT Only'>('All');
   const [sortBy, setSortBy] = useState<'name' | 'time' | 'punches'>('name');
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
@@ -49,7 +67,7 @@ export default function DashboardScreen() {
     setSortBy('name');
   };
 
-  const selectedDateStr = date.toISOString().split('T')[0];
+  const selectedDateStr = formatLocalDate(date);
   const dayRecords = attendanceRecords.filter((r) => r.date === selectedDateStr);
 
   // Dept filter list (always has 'All' first)
@@ -62,9 +80,10 @@ export default function DashboardScreen() {
       
       const matchesStatus =
         selectedStatus === 'All' ||
-        (selectedStatus === 'Present' && (r.status === 'PRESENT' || r.punches.length > 0)) ||
+        (selectedStatus === 'Present' && r.status === 'PRESENT') ||
         (selectedStatus === 'Late' && r.status === 'LATE') ||
-        (selectedStatus === 'Half Day' && r.status === 'HALF_DAY');
+        (selectedStatus === 'Half Day' && r.status === 'HALF_DAY') ||
+        (selectedStatus === 'On Leave' && r.status === 'ON_LEAVE');
 
       let matchesPunchType = true;
       if (selectedPunchType === 'IN Only') {
@@ -98,9 +117,33 @@ export default function DashboardScreen() {
       return 0;
     });
 
+  const onLeaveToday = enrolledEmployees.filter((emp) =>
+    leaves.some(
+      (l) =>
+        l.employeeId === emp.employeeId &&
+        l.startDate <= selectedDateStr &&
+        l.endDate >= selectedDateStr &&
+        l.status === 'APPROVED'
+    )
+  ).length;
+
+  const absentCount = enrolledEmployees.filter(
+    (emp) =>
+      !dayRecords.some((r) => r.employeeId === emp.employeeId) &&
+      !leaves.some(
+        (l) =>
+          l.employeeId === emp.employeeId &&
+          l.startDate <= selectedDateStr &&
+          l.endDate >= selectedDateStr &&
+          l.status === 'APPROVED'
+      )
+  ).length;
+
   const stats = {
     markedToday: dayRecords.length,
-    totalEnrolled: Math.max(dayRecords.length, 2),
+    onLeaveToday,
+    totalEnrolled: enrolledEmployees.length,
+    absentToday: absentCount,
   };
 
   const handleDeletePunch = (employeeId: string, date: string, punchId: string, punchTime: string) => {
@@ -197,7 +240,7 @@ export default function DashboardScreen() {
 
   const handleSendEmailSummary = async () => {
     try {
-      const companyEmail = currentUser?.companyEmail || 'admin@company.com';
+      const companyEmail = getKeyValue('daily_report_email') || currentUser?.companyEmail || 'admin@company.com';
       const companyName = currentUser?.companyName || 'Visagel Enterprise';
 
       const isAvailable = await MailComposer.isAvailableAsync();
@@ -354,21 +397,41 @@ export default function DashboardScreen() {
         <View style={styles.gridRow}>
           <View style={styles.metricCard}>
             <View style={styles.metricIconWrapGreen}>
-              <MaterialCommunityIcons name="account-check" size={20} color="#059669" />
+              <MaterialCommunityIcons name="account-check" size={16} color="#059669" />
             </View>
             <View>
               <Text style={styles.metricValue}>{stats.markedToday}</Text>
-              <Text style={styles.metricLabel}>Present Today</Text>
+              <Text style={styles.metricLabel}>Present</Text>
+            </View>
+          </View>
+
+          <View style={styles.metricCard}>
+            <View style={[styles.metricIconWrapBlue, { backgroundColor: '#F5F3FF' }]}>
+              <MaterialCommunityIcons name="calendar-account" size={16} color="#7C3AED" />
+            </View>
+            <View>
+              <Text style={[styles.metricValue, { color: stats.onLeaveToday > 0 ? '#7C3AED' : '#0F172A' }]}>{stats.onLeaveToday}</Text>
+              <Text style={styles.metricLabel}>On Leave</Text>
+            </View>
+          </View>
+
+          <View style={styles.metricCard}>
+            <View style={[styles.metricIconWrapBlue, { backgroundColor: '#FEF2F2' }]}>
+              <MaterialCommunityIcons name="account-remove" size={16} color="#DC2626" />
+            </View>
+            <View>
+              <Text style={[styles.metricValue, { color: stats.absentToday > 0 ? '#DC2626' : '#0F172A' }]}>{stats.absentToday}</Text>
+              <Text style={styles.metricLabel}>Absent</Text>
             </View>
           </View>
 
           <View style={styles.metricCard}>
             <View style={styles.metricIconWrapBlue}>
-              <MaterialCommunityIcons name="account-group" size={20} color="#2563EB" />
+              <MaterialCommunityIcons name="account-group" size={16} color="#2563EB" />
             </View>
             <View>
               <Text style={styles.metricValue}>{stats.totalEnrolled}</Text>
-              <Text style={styles.metricLabel}>Total Enrolled</Text>
+              <Text style={styles.metricLabel}>Enrolled</Text>
             </View>
           </View>
         </View>
@@ -376,18 +439,23 @@ export default function DashboardScreen() {
         {/* Action Buttons Row */}
         <View style={styles.actionRow}>
           <TouchableOpacity style={[styles.actionButton, { flex: 1 }]} onPress={exportToCSV} activeOpacity={0.8}>
-            <FontAwesome name="download" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-            <Text style={styles.actionButtonText} numberOfLines={1} adjustsFontSizeToFit>Export CSV</Text>
+            <FontAwesome name="download" size={10} color="#FFFFFF" style={{ marginRight: 3 }} />
+            <Text style={styles.actionButtonText} numberOfLines={1}>Export</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={[styles.actionButton, { flex: 1, backgroundColor: '#7C3AED' }]} onPress={() => setLeaveModalVisible(true)} activeOpacity={0.8}>
+            <MaterialCommunityIcons name="calendar-multiselect" size={12} color="#FFFFFF" style={{ marginRight: 3 }} />
+            <Text style={styles.actionButtonText} numberOfLines={1}>Leaves</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={[styles.actionButton, { flex: 1, backgroundColor: '#0A192F' }]} onPress={handleCalendarIntegration} activeOpacity={0.8}>
-            <FontAwesome name="calendar-check-o" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-            <Text style={styles.actionButtonText} numberOfLines={1} adjustsFontSizeToFit>Sync Calendar</Text>
+            <FontAwesome name="calendar-check-o" size={10} color="#FFFFFF" style={{ marginRight: 3 }} />
+            <Text style={styles.actionButtonText} numberOfLines={1}>Calendar</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={[styles.actionButton, { flex: 1, backgroundColor: '#059669' }]} onPress={handleSendEmailSummary} activeOpacity={0.8}>
-            <MaterialCommunityIcons name="email-fast-outline" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-            <Text style={styles.actionButtonText} numberOfLines={1} adjustsFontSizeToFit>Email Summary</Text>
+            <MaterialCommunityIcons name="email-fast-outline" size={12} color="#FFFFFF" style={{ marginRight: 3 }} />
+            <Text style={styles.actionButtonText} numberOfLines={1}>Email</Text>
           </TouchableOpacity>
         </View>
 
@@ -491,7 +559,7 @@ export default function DashboardScreen() {
               {/* Status Filter Pills */}
               <Text style={[styles.filterSectionLabel, { marginTop: 10 }]}>ATTENDANCE STATUS</Text>
               <View style={styles.pillsWrapRow}>
-                {(['All', 'Present', 'Late', 'Half Day'] as const).map((st) => (
+                {(['All', 'Present', 'Late', 'Half Day', 'On Leave'] as const).map((st) => (
                   <TouchableOpacity
                     key={st}
                     style={[
@@ -625,15 +693,32 @@ export default function DashboardScreen() {
                       <Text style={styles.empNameText} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
                       <Text style={styles.empIdText} numberOfLines={1}>{item.employeeId}</Text>
                     </View>
-                    <View style={styles.punchCountBadge}>
-                      <MaterialCommunityIcons name="gesture-tap" size={11} color="#2563EB" style={{ marginRight: 3 }} />
-                      <Text style={styles.punchCountBadgeText} numberOfLines={1}>
-                        {item.punches.length} {item.punches.length === 1 ? 'Punch' : 'Punches'}
-                      </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                      {item.status === 'LATE' && (
+                        <View style={styles.statusBadgeLate}>
+                          <Text style={styles.statusBadgeLateText}>LATE</Text>
+                        </View>
+                      )}
+                      {item.status === 'HALF_DAY' && (
+                        <View style={styles.statusBadgeHalfDay}>
+                          <Text style={styles.statusBadgeHalfDayText}>HALF DAY</Text>
+                        </View>
+                      )}
+                      {item.status === 'PRESENT' && (
+                        <View style={styles.statusBadgePresent}>
+                          <Text style={styles.statusBadgePresentText}>PRESENT</Text>
+                        </View>
+                      )}
+                      <View style={styles.punchCountBadge}>
+                        <MaterialCommunityIcons name="gesture-tap" size={11} color="#2563EB" style={{ marginRight: 3 }} />
+                        <Text style={styles.punchCountBadgeText} numberOfLines={1}>
+                          {item.punches.length} {item.punches.length === 1 ? 'Punch' : 'Punches'}
+                        </Text>
+                      </View>
                     </View>
                   </View>
 
-                  {/* Bottom row: Time In & Time Out Pills */}
+                  {/* Bottom row: Time In & Time Out Pills + Working Hours */}
                   <View style={styles.timingRow}>
                     <View style={styles.timePillIn}>
                       <MaterialCommunityIcons name="login" size={13} color="#059669" style={{ marginRight: 5 }} />
@@ -651,9 +736,27 @@ export default function DashboardScreen() {
                       </View>
                     </View>
 
-                    <View style={styles.viewTimelineBtn}>
-                      <FontAwesome name="chevron-right" size={11} color="#94A3B8" />
-                    </View>
+                    {item.totalWorkingHours && (
+                      <View style={[styles.timePillOut, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}>
+                        <MaterialCommunityIcons name="timer-outline" size={13} color="#059669" style={{ marginRight: 5 }} />
+                        <View style={{ flex: 1, overflow: 'hidden' }}>
+                          <Text style={[styles.timePillLabelOut, { color: '#059669' }]} numberOfLines={1}>HOURS</Text>
+                          <Text style={[styles.timePillValueOut, { color: '#166534' }]} numberOfLines={1} adjustsFontSizeToFit>{item.totalWorkingHours}</Text>
+                        </View>
+                      </View>
+                    )}
+
+                    <TouchableOpacity
+                      style={styles.historyPillBtn}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setSelectedEmpForHistory(item);
+                      }}
+                      activeOpacity={0.75}
+                    >
+                      <MaterialCommunityIcons name="history" size={13} color="#2563EB" style={{ marginRight: 3 }} />
+                      <Text style={styles.historyPillBtnText}>30D</Text>
+                    </TouchableOpacity>
                   </View>
                 </TouchableOpacity>
               );
@@ -732,6 +835,297 @@ export default function DashboardScreen() {
             <TouchableOpacity
               style={styles.closeModalBtn}
               onPress={() => setSelectedEmpPunches(null)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.closeModalBtnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── 30-Day Attendance History Modal ── */}
+      <Modal
+        visible={!!selectedEmpForHistory}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setSelectedEmpForHistory(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.detailCard, { maxHeight: '85%' }]}>
+            <View style={styles.detailHeader}>
+              <View>
+                <Text style={styles.detailTitle}>{selectedEmpForHistory?.name}</Text>
+                <Text style={styles.detailSubtitle}>
+                  {selectedEmpForHistory?.employeeId} · 30-Day Attendance History
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.closeDetailBtn}
+                onPress={() => setSelectedEmpForHistory(null)}
+              >
+                <FontAwesome name="close" size={16} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {(() => {
+              if (!selectedEmpForHistory) return null;
+              const empRecords = attendanceRecords
+                .filter((r) => r.employeeId === selectedEmpForHistory.employeeId)
+                .sort((a, b) => b.date.localeCompare(a.date))
+                .slice(0, 30);
+
+              const presentDays = empRecords.filter((r) => r.status === 'PRESENT').length;
+              const lateDays = empRecords.filter((r) => r.status === 'LATE').length;
+              const halfDays = empRecords.filter((r) => r.status === 'HALF_DAY').length;
+              const onLeaveDays = leaves.filter(
+                (l) => l.employeeId === selectedEmpForHistory.employeeId && l.status === 'APPROVED'
+              ).length;
+
+              return (
+                <View style={{ flex: 1 }}>
+                  {/* Summary KPI row */}
+                  <View style={styles.historyKpiRow}>
+                    <View style={styles.historyKpiBox}>
+                      <Text style={[styles.historyKpiValue, { color: '#059669' }]}>{presentDays}</Text>
+                      <Text style={styles.historyKpiLabel}>Present</Text>
+                    </View>
+                    <View style={styles.historyKpiBox}>
+                      <Text style={[styles.historyKpiValue, { color: '#D97706' }]}>{lateDays}</Text>
+                      <Text style={styles.historyKpiLabel}>Late</Text>
+                    </View>
+                    <View style={styles.historyKpiBox}>
+                      <Text style={[styles.historyKpiValue, { color: '#7C3AED' }]}>{halfDays}</Text>
+                      <Text style={styles.historyKpiLabel}>Half Day</Text>
+                    </View>
+                    <View style={styles.historyKpiBox}>
+                      <Text style={[styles.historyKpiValue, { color: '#2563EB' }]}>{onLeaveDays}</Text>
+                      <Text style={styles.historyKpiLabel}>Leaves</Text>
+                    </View>
+                  </View>
+
+                  <ScrollView style={{ marginTop: 10 }} showsVerticalScrollIndicator={false}>
+                    {empRecords.length === 0 ? (
+                      <View style={{ padding: 20, alignItems: 'center' }}>
+                        <Text style={{ color: '#94A3B8', fontSize: 13 }}>No past attendance records found.</Text>
+                      </View>
+                    ) : (
+                      empRecords.map((rec) => {
+                        const firstIn = rec.punches.find((p) => p.type === 'IN')?.time || 'N/A';
+                        const lastOut = [...rec.punches].reverse().find((p) => p.type === 'OUT')?.time || 'N/A';
+                        return (
+                          <View key={rec.id || rec.date} style={styles.historyCardItem}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                              <Text style={styles.historyCardDate}>{rec.date}</Text>
+                              <View
+                                style={[
+                                  styles.historyStatusBadge,
+                                  rec.status === 'LATE'
+                                    ? styles.statusBadgeLate
+                                    : rec.status === 'HALF_DAY'
+                                    ? styles.statusBadgeHalfDay
+                                    : styles.statusBadgePresent,
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.historyStatusText,
+                                    rec.status === 'LATE'
+                                      ? styles.statusBadgeLateText
+                                      : rec.status === 'HALF_DAY'
+                                      ? styles.statusBadgeHalfDayText
+                                      : styles.statusBadgePresentText,
+                                  ]}
+                                >
+                                  {rec.status}
+                                </Text>
+                              </View>
+                            </View>
+                            <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+                              <Text style={styles.historyPunchText}>IN: {firstIn}</Text>
+                              <Text style={styles.historyPunchText}>OUT: {lastOut}</Text>
+                              {rec.totalWorkingHours && (
+                                <Text style={styles.historyHoursText}>⏱ {rec.totalWorkingHours}</Text>
+                              )}
+                            </View>
+                          </View>
+                        );
+                      })
+                    )}
+                  </ScrollView>
+                </View>
+              );
+            })()}
+
+            <TouchableOpacity
+              style={[styles.closeModalBtn, { marginTop: 12 }]}
+              onPress={() => setSelectedEmpForHistory(null)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.closeModalBtnText}>Close History</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Leave Management Modal ── */}
+      <Modal
+        visible={leaveModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setLeaveModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.detailCard, { maxHeight: '90%' }]}>
+            <View style={styles.detailHeader}>
+              <View>
+                <Text style={styles.detailTitle}>Leave Management</Text>
+                <Text style={styles.detailSubtitle}>Grant and review official leaves</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.closeDetailBtn}
+                onPress={() => setLeaveModalVisible(false)}
+              >
+                <FontAwesome name="close" size={16} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {/* Grant New Leave Section */}
+              <Text style={styles.leaveSectionHeading}>GRANT NEW LEAVE</Text>
+
+              {/* Employee Picker */}
+              <Text style={styles.inputLabelSmall}>SELECT EMPLOYEE</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {enrolledEmployees.map((emp) => {
+                    const isSelected = (newLeaveEmpId || enrolledEmployees[0]?.employeeId) === emp.employeeId;
+                    return (
+                      <TouchableOpacity
+                        key={emp.id}
+                        style={[
+                          styles.empPickerPill,
+                          isSelected && styles.empPickerPillActive,
+                        ]}
+                        onPress={() => setNewLeaveEmpId(emp.employeeId)}
+                      >
+                        <Text style={[styles.empPickerText, isSelected && { color: '#FFFFFF' }]}>
+                          {emp.name} ({emp.employeeId})
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+
+              {/* Leave Type Selector */}
+              <Text style={styles.inputLabelSmall}>LEAVE TYPE</Text>
+              <View style={{ flexDirection: 'row', gap: 6, marginBottom: 10 }}>
+                {(['Casual', 'Sick', 'Earned', 'Unpaid'] as const).map((t) => (
+                  <TouchableOpacity
+                    key={t}
+                    style={[
+                      styles.leaveTypePill,
+                      newLeaveType === t && styles.leaveTypePillActive,
+                    ]}
+                    onPress={() => setNewLeaveType(t)}
+                  >
+                    <Text style={[styles.leaveTypeText, newLeaveType === t && { color: '#FFFFFF' }]}>{t}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Date range inputs */}
+              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabelSmall}>START DATE</Text>
+                  <TextInput
+                    style={styles.leaveInput}
+                    value={newLeaveStart}
+                    onChangeText={setNewLeaveStart}
+                    placeholder="YYYY-MM-DD"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabelSmall}>END DATE</Text>
+                  <TextInput
+                    style={styles.leaveInput}
+                    value={newLeaveEnd}
+                    onChangeText={setNewLeaveEnd}
+                    placeholder="YYYY-MM-DD"
+                  />
+                </View>
+              </View>
+
+              {/* Reason input */}
+              <Text style={styles.inputLabelSmall}>REASON</Text>
+              <TextInput
+                style={[styles.leaveInput, { height: 55, textAlignVertical: 'top' }]}
+                value={newLeaveReason}
+                onChangeText={setNewLeaveReason}
+                placeholder="Reason for leave…"
+                multiline
+              />
+
+              {/* Submit Leave Button */}
+              <TouchableOpacity
+                style={styles.grantLeaveBtn}
+                activeOpacity={0.85}
+                onPress={async () => {
+                  const targetEmpId = newLeaveEmpId || enrolledEmployees[0]?.employeeId;
+                  const emp = enrolledEmployees.find((e) => e.employeeId === targetEmpId);
+                  if (!emp) {
+                    ThemedAlert.alert('Selection Required', 'Please select an employee.', [{ text: 'OK' }], 'warning');
+                    return;
+                  }
+                  await markEmployeeLeave(
+                    emp.employeeId,
+                    emp.name,
+                    newLeaveStart,
+                    newLeaveEnd,
+                    newLeaveType,
+                    newLeaveReason || `${newLeaveType} leave`
+                  );
+                  setNewLeaveReason('');
+                  ThemedAlert.alert('Leave Granted', `Leave recorded for ${emp.name}.`, [{ text: 'OK' }], 'success');
+                }}
+              >
+                <MaterialCommunityIcons name="calendar-plus" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.grantLeaveBtnText}>Grant & Approve Leave</Text>
+              </TouchableOpacity>
+
+              {/* Active Leaves List */}
+              <Text style={[styles.leaveSectionHeading, { marginTop: 16 }]}>
+                ACTIVE & UPCOMING LEAVES ({leaves.length})
+              </Text>
+              {leaves.length === 0 ? (
+                <View style={{ padding: 14, alignItems: 'center' }}>
+                  <Text style={{ color: '#94A3B8', fontSize: 12 }}>No leaves recorded.</Text>
+                </View>
+              ) : (
+                leaves.map((l) => (
+                  <View key={l.id} style={styles.leaveItemCard}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.leaveItemEmpName}>{l.employeeName} ({l.employeeId})</Text>
+                      <Text style={styles.leaveItemDates}>
+                        📅 {l.startDate} → {l.endDate} · <Text style={{ fontWeight: '800', color: '#7C3AED' }}>{l.type}</Text>
+                      </Text>
+                      {l.reason ? <Text style={styles.leaveItemReason}>"{l.reason}"</Text> : null}
+                    </View>
+                    <TouchableOpacity
+                      style={styles.deleteLeaveBtn}
+                      onPress={() => deleteLeave(l.id)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <MaterialCommunityIcons name="trash-can-outline" size={16} color="#EF4444" />
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={[styles.closeModalBtn, { marginTop: 12 }]}
+              onPress={() => setLeaveModalVisible(false)}
               activeOpacity={0.85}
             >
               <Text style={styles.closeModalBtnText}>Close</Text>
@@ -841,18 +1235,18 @@ const styles = StyleSheet.create({
   },
   gridRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 8,
     marginBottom: 14,
   },
   metricCard: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 6,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     shadowColor: '#64748B',
@@ -862,28 +1256,28 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   metricIconWrapGreen: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 8,
     backgroundColor: '#ECFDF5',
     alignItems: 'center',
     justifyContent: 'center',
   },
   metricIconWrapBlue: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 8,
     backgroundColor: '#EFF6FF',
     alignItems: 'center',
     justifyContent: 'center',
   },
   metricLabel: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#64748B',
     fontWeight: '600',
   },
   metricValue: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
     color: '#0F172A',
   },
@@ -1022,14 +1416,53 @@ const styles = StyleSheet.create({
     backgroundColor: '#EFF6FF',
     borderWidth: 1,
     borderColor: '#DBEAFE',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 8,
   },
   punchCountBadgeText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
     color: '#2563EB',
+  },
+  statusBadgeLate: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 7,
+  },
+  statusBadgeLateText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#DC2626',
+  },
+  statusBadgeHalfDay: {
+    backgroundColor: '#F5F3FF',
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 7,
+  },
+  statusBadgeHalfDayText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#7C3AED',
+  },
+  statusBadgePresent: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 7,
+  },
+  statusBadgePresentText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#059669',
   },
   timingRow: {
     flexDirection: 'row',
@@ -1369,7 +1802,6 @@ const styles = StyleSheet.create({
   compactPillTextInactive: {
     color: '#475569',
   },
-  // ── Delete punch button ─────────────────────────────────────────────
   deletePunchBtn: {
     width: 28,
     height: 28,
@@ -1380,5 +1812,187 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     borderWidth: 1,
     borderColor: '#FECACA',
+  },
+  // ── 30-Day History & Leave Modal Styles ───────────────────────────
+  historyPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginLeft: 4,
+  },
+  historyPillBtnText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#2563EB',
+  },
+  historyKpiRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  historyKpiBox: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  historyKpiValue: {
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  historyKpiLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 1,
+  },
+  historyCardItem: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  historyCardDate: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  historyStatusBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  historyStatusText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+  },
+  historyPunchText: {
+    fontSize: 11,
+    color: '#475569',
+    fontWeight: '600',
+  },
+  historyHoursText: {
+    fontSize: 11,
+    color: '#059669',
+    fontWeight: '700',
+    marginLeft: 'auto',
+  },
+  leaveSectionHeading: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  inputLabelSmall: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  empPickerPill: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  empPickerPillActive: {
+    backgroundColor: '#7C3AED',
+    borderColor: '#6D28D9',
+  },
+  empPickerText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  leaveTypePill: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingVertical: 6,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  leaveTypePillActive: {
+    backgroundColor: '#7C3AED',
+    borderColor: '#6D28D9',
+  },
+  leaveTypeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  leaveInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 12,
+    color: '#0F172A',
+  },
+  grantLeaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#7C3AED',
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginTop: 8,
+  },
+  grantLeaveBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  leaveItemCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  leaveItemEmpName: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  leaveItemDates: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  leaveItemReason: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
+  deleteLeaveBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#FEF2F2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
   },
 });

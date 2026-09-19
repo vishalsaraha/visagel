@@ -13,7 +13,6 @@ export interface AiModelSettings {
   modelEngine: 'local' | 'cloud';
   livenessMode: 'strict' | 'balanced' | 'off';
   minConfidence: number;
-  scanCooldownSec: number;
   cloudApiUrl: string;
   cloudApiKey: string;
   cloudApiSecret: string;
@@ -37,6 +36,18 @@ export interface PunchRecord {
   timestamp: number;
 }
 
+export interface LeaveRecord {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  startDate: string;
+  endDate: string;
+  type: 'Casual' | 'Sick' | 'Earned' | 'Unpaid';
+  reason: string;
+  status: 'APPROVED' | 'PENDING' | 'CANCELLED';
+  createdAt: number;
+}
+
 export interface EmployeeAttendance {
   id: string;
   employeeId: string;
@@ -45,7 +56,7 @@ export interface EmployeeAttendance {
   date: string;
   punches: PunchRecord[];
   totalWorkingHours?: string;
-  status: 'PRESENT' | 'LATE' | 'HALF_DAY';
+  status: 'PRESENT' | 'LATE' | 'HALF_DAY' | 'ON_LEAVE';
 }
 
 export interface ShiftEntry {
@@ -64,7 +75,6 @@ export const DEFAULT_AI_SETTINGS: AiModelSettings = {
   modelEngine: 'local',
   livenessMode: 'balanced',
   minConfidence: 75,
-  scanCooldownSec: 30,
   cloudApiUrl: 'https://api-us.faceplusplus.com/facepp/v3/compare',
   cloudApiKey: '',
   cloudApiSecret: '',
@@ -171,9 +181,23 @@ function initSchema(db: SQLite.SQLiteDatabase) {
       is_required INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS leaves (
+      id TEXT PRIMARY KEY,
+      employee_id TEXT NOT NULL,
+      employee_name TEXT NOT NULL,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      type TEXT NOT NULL,
+      reason TEXT,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance_records(date);
     CREATE INDEX IF NOT EXISTS idx_punches_attendance ON punches(attendance_id);
     CREATE INDEX IF NOT EXISTS idx_employees_emp_id ON employees(employee_id);
+    CREATE INDEX IF NOT EXISTS idx_leaves_emp ON leaves(employee_id);
+    CREATE INDEX IF NOT EXISTS idx_leaves_dates ON leaves(start_date, end_date);
   `);
 
   migrateLegacyData(db);
@@ -657,6 +681,108 @@ export function logoutOrgPlatformAccountDb(): OrgPlatformAccount {
   };
   saveOrgPlatformAccountDb(loggedOut);
   return loggedOut;
+}
+
+// ── Leaves Management ────────────────────────────────────────────────────────
+export function getLeavesDb(): LeaveRecord[] {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    const rows = db.getAllSync<{
+      id: string;
+      employee_id: string;
+      employee_name: string;
+      start_date: string;
+      end_date: string;
+      type: string;
+      reason: string;
+      status: string;
+      created_at: number;
+    }>('SELECT * FROM leaves ORDER BY created_at DESC');
+
+    return rows.map((r) => ({
+      id: r.id,
+      employeeId: r.employee_id,
+      employeeName: r.employee_name,
+      startDate: r.start_date,
+      endDate: r.end_date,
+      type: r.type as 'Casual' | 'Sick' | 'Earned' | 'Unpaid',
+      reason: r.reason,
+      status: r.status as 'APPROVED' | 'PENDING' | 'CANCELLED',
+      createdAt: r.created_at,
+    }));
+  } catch (err) {
+    console.warn('[Database] getLeavesDb error:', err);
+    return [];
+  }
+}
+
+export function saveLeaveDb(leave: LeaveRecord): void {
+  const db = getDb();
+  if (!db) return;
+  try {
+    db.runSync(
+      `INSERT OR REPLACE INTO leaves (id, employee_id, employee_name, start_date, end_date, type, reason, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        leave.id,
+        leave.employeeId,
+        leave.employeeName,
+        leave.startDate,
+        leave.endDate,
+        leave.type,
+        leave.reason,
+        leave.status,
+        leave.createdAt,
+      ]
+    );
+  } catch (err) {
+    console.warn('[Database] saveLeaveDb error:', err);
+  }
+}
+
+export function deleteLeaveDb(id: string): void {
+  const db = getDb();
+  if (!db) return;
+  try {
+    db.runSync('DELETE FROM leaves WHERE id = ?', [id]);
+  } catch (err) {
+    console.warn('[Database] deleteLeaveDb error:', err);
+  }
+}
+
+export function isEmployeeOnLeaveDb(employeeId: string, dateStr: string): boolean {
+  const db = getDb();
+  if (!db) return false;
+  try {
+    const row = db.getFirstSync<{ count: number }>(
+      `SELECT count(*) as count FROM leaves
+       WHERE employee_id = ? AND start_date <= ? AND end_date >= ? AND status = 'APPROVED'`,
+      [employeeId, dateStr, dateStr]
+    );
+    return (row?.count || 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+// ── Voice & Group Scan Settings ──────────────────────────────────────────────
+export function getVoiceFeedbackDb(): boolean {
+  const val = getKeyValue('voice_feedback');
+  return val === null ? true : val === 'true';
+}
+
+export function saveVoiceFeedbackDb(enabled: boolean): void {
+  setKeyValue('voice_feedback', enabled ? 'true' : 'false');
+}
+
+export function getGroupScanModeDb(): boolean {
+  const val = getKeyValue('group_scan_mode');
+  return val === 'true';
+}
+
+export function saveGroupScanModeDb(enabled: boolean): void {
+  setKeyValue('group_scan_mode', enabled ? 'true' : 'false');
 }
 
 

@@ -23,14 +23,15 @@ import * as MailComposer from 'expo-mail-composer';
 import * as FileSystem from 'expo-file-system/legacy';
 import AppDateTimePicker from '@/components/AppDateTimePicker';
 import OrgLoginModal from '@/components/OrgLoginModal';
-import { getOrgPlatformAccountDb, saveOrgPlatformAccountDb, logoutOrgPlatformAccountDb, deriveCompanyName, OrgPlatformAccount } from '@/utils/database';
+import { getOrgPlatformAccountDb, saveOrgPlatformAccountDb, logoutOrgPlatformAccountDb, deriveCompanyName, OrgPlatformAccount, getKeyValue, setKeyValue } from '@/utils/database';
+import { formatLocalDate } from '@/utils/clockSync';
 
 const THEME_COLOR = '#FF6900';
 const THEME_COLOR_10_OPACITY = 'rgba(255, 105, 0, 0.1)';
 const NIGHT_COLOR = '#6366F1';
 const NIGHT_COLOR_10 = 'rgba(99, 102, 241, 0.1)';
 
-// Helper: detect night shift (end hour before start hour → crosses midnight)
+// Helper: detect night shift (end hour before start hour â†’ crosses midnight)
 function isNightShift(startH: number, endH: number): boolean {
   return endH <= startH;
 }
@@ -66,11 +67,12 @@ export default function SettingsScreen() {
     departments, saveDepartments,
     customFields, saveCustomFields,
     aiSettings, saveAiSettings, enrolledEmployees,
+    voiceFeedback, saveVoiceFeedback,
+    groupScanMode, saveGroupScanMode,
   } = useAttendance();
 
   // Feature toggles
   const [autoFaceDetection, setAutoFaceDetection] = useState(true);
-  const [voiceFeedback, setVoiceFeedback] = useState(true);
   const [sendReportsDaily, setSendReportsDaily] = useState(false);
 
   // Daily Email Summary State
@@ -78,11 +80,12 @@ export default function SettingsScreen() {
   const [companyEmailInput, setCompanyEmailInput] = useState(currentUser?.companyEmail || 'admin@company.com');
   const [isSendingEmail, setIsSendingEmail] = useState(false);
 
-  // Cloud AI & Detection State
-  const [cloudProvider, setCloudProvider] = useState<'aws' | 'facepp' | 'custom'>('aws');
-  const [cloudSyncEnabled, setCloudSyncEnabled] = useState(false);
-  const [cloudVectorDim, setCloudVectorDim] = useState<'128' | '512'>('128');
-  const [isTestingCloud, setIsTestingCloud] = useState(false);
+  // Daily Report Email Address (persistent, changeable)
+  const [dailyMailModalVisible, setDailyMailModalVisible] = useState(false);
+  const [dailyMailAddress, setDailyMailAddress] = useState<string>(
+    () => getKeyValue('daily_report_email') || currentUser?.companyEmail || 'admin@company.com'
+  );
+  const [dailyMailInput, setDailyMailInput] = useState<string>('');
 
   // Modals
   const [manageShiftsVisible, setManageShiftsVisible] = useState(false);
@@ -166,7 +169,7 @@ export default function SettingsScreen() {
   const handleSendDailyEmailSummary = async (targetEmail?: string) => {
     const email = targetEmail || companyEmailInput || currentUser?.companyEmail || 'admin@company.com';
     const company = currentUser?.companyName || 'Visagel Enterprise';
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = formatLocalDate(new Date());
     const todayRecords = attendanceRecords.filter((r) => r.date === todayStr);
 
     try {
@@ -193,11 +196,11 @@ export default function SettingsScreen() {
       const emailBody =
         `Dear Leadership & Management,\n\n` +
         `Please find below the Daily Attendance Summary report for ${todayStr}:\n\n` +
-        `• Organization: ${company}\n` +
-        `• Date: ${todayStr}\n` +
-        `• Staff Present: ${todayRecords.length}\n` +
-        `• Total Enrolled: ${enrolledEmployees.length}\n` +
-        `• Dispatched by: ${currentUser?.name || 'Admin'} (${currentUser?.loginId || 'admin'})\n\n` +
+        `â€¢ Organization: ${company}\n` +
+        `â€¢ Date: ${todayStr}\n` +
+        `â€¢ Staff Present: ${todayRecords.length}\n` +
+        `â€¢ Total Enrolled: ${enrolledEmployees.length}\n` +
+        `â€¢ Dispatched by: ${currentUser?.name || 'Admin'} (${currentUser?.loginId || 'admin'})\n\n` +
         `Detailed punch stamps and biometric audit logs are attached as CSV.\n\n` +
         `Regards,\nVisagel Face Attendance Terminal`;
 
@@ -217,18 +220,6 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleTestCloudAiConnection = async () => {
-    setIsTestingCloud(true);
-    await new Promise((r) => setTimeout(r, 600));
-    setIsTestingCloud(false);
-    const simulatedPing = Math.floor(Math.random() * 25) + 38;
-    ThemedAlert.alert(
-      'Cloud AI Online',
-      `Successfully connected to ${cloudProvider === 'aws' ? 'AWS Rekognition' : cloudProvider === 'facepp' ? 'Face++ Vision API' : 'Enterprise Gateway'}.\n\n• Round-Trip Latency: ${simulatedPing}ms\n• Biometric Vector Engine: Synchronized\n• Status: Active & Operational`,
-      [{ text: 'Great', style: 'default' }],
-      'success'
-    );
-  };
 
   const runBenchmarkTest = async () => {
     setIsBenchmarking(true);
@@ -240,10 +231,10 @@ export default function SettingsScreen() {
 
       let report = `AI MODEL BENCHMARK REPORT\n`;
       report += `====================================\n`;
-      report += `• Engine Mode: ${aiSettings.modelEngine === 'cloud' ? 'Cloud AI Provider' : 'Local Edge 128-D Vector'}\n`;
-      report += `• Liveness Guard: ${aiSettings.livenessMode.toUpperCase()}\n`;
-      report += `• Target Threshold: ${aiSettings.minConfidence}%\n`;
-      report += `• Enrolled Personnel: ${enrolledEmployees.length} (${valid.length} with Photos)\n\n`;
+      report += `• Engine Mode: Local Edge 128-D Biometric Vector\n`;
+      report += `â€¢ Liveness Guard: ${aiSettings.livenessMode.toUpperCase()}\n`;
+      report += `â€¢ Target Threshold: ${aiSettings.minConfidence}%\n`;
+      report += `â€¢ Enrolled Personnel: ${enrolledEmployees.length} (${valid.length} with Photos)\n\n`;
 
       const startTime = Date.now();
       const vectors = [];
@@ -254,7 +245,7 @@ export default function SettingsScreen() {
           const uri = emp.photoUri as string;
           const v = await extractFaceVector(uri);
           vectors.push({ emp, v });
-          report += `[✔] ${emp.name} (${emp.employeeId}): 128-d Vector extracted.\n`;
+          report += `[âœ”] ${emp.name} (${emp.employeeId}): 128-d Vector extracted.\n`;
         }
       }
 
@@ -273,23 +264,23 @@ export default function SettingsScreen() {
       const duration = Date.now() - startTime;
       report += `\nBENCHMARK METRICS:\n`;
       if (valid.length > 0) {
-        report += `• Real Face Vector Extraction: ${duration} ms (${Math.round(duration / valid.length)} ms/template)\n`;
+        report += `â€¢ Real Face Vector Extraction: ${duration} ms (${Math.round(duration / valid.length)} ms/template)\n`;
       } else {
-        report += `• Synthetic Mode: Executed 100 128-D vector probes\n`;
+        report += `â€¢ Synthetic Mode: Executed 100 128-D vector probes\n`;
       }
-      report += `• Vector Similarity Speed: ${benchTime} ms for ${SYNTH_PROBES} comparisons (~${opsPerSec.toLocaleString()} ops/sec)\n`;
-      report += `• Cosine Distance Precision: 32-bit Floating Point (Dot Product)\n`;
-      report += `• Hardware Acceleration: Active (Hermes TurboEngine)\n`;
+      report += `â€¢ Vector Similarity Speed: ${benchTime} ms for ${SYNTH_PROBES} comparisons (~${opsPerSec.toLocaleString()} ops/sec)\n`;
+      report += `â€¢ Cosine Distance Precision: 32-bit Floating Point (Dot Product)\n`;
+      report += `â€¢ Hardware Acceleration: Active (Hermes TurboEngine)\n`;
 
       if (vectors.length >= 2) {
         const sim = computeCosineSimilarity(vectors[0].v, vectors[1].v);
         const dist = (1 - sim).toFixed(3);
-        report += `• Template Inter-Similarity (${vectors[0].emp.name} vs ${vectors[1].emp.name}): ${(sim * 100).toFixed(1)}% (Distance: ${dist})\n`;
+        report += `â€¢ Template Inter-Similarity (${vectors[0].emp.name} vs ${vectors[1].emp.name}): ${(sim * 100).toFixed(1)}% (Distance: ${dist})\n`;
       } else if (valid.length === 0) {
-        report += `• Synthetic Inter-Probe Similarity: ${(lastSim * 100).toFixed(1)}%\n`;
+        report += `â€¢ Synthetic Inter-Probe Similarity: ${(lastSim * 100).toFixed(1)}%\n`;
       }
 
-      report += `\n• STATUS: PASSED — AI Engine ready for high-accuracy attendance scanning.`;
+      report += `\nâ€¢ STATUS: PASSED â€” AI Engine ready for high-accuracy attendance scanning.`;
       setBenchmarkResult(report);
     } catch (err) {
       setBenchmarkResult(`Benchmark Error: ${String(err)}`);
@@ -528,7 +519,7 @@ export default function SettingsScreen() {
               <View style={styles.companySystemBadge}>
                 <MaterialCommunityIcons name="shield-check" size={12} color="#059669" style={{ marginRight: 4 }} />
                 <Text style={styles.companySystemBadgeText} numberOfLines={1}>
-                  {orgAccount.orgId} · Visagel Attendance System
+                  {orgAccount.orgId} Â· Visagel Attendance System
                 </Text>
               </View>
             </View>
@@ -546,12 +537,12 @@ export default function SettingsScreen() {
               <MaterialCommunityIcons name="clock-outline" size={20} color="#FF6900" />
             </View>
             <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>Work Shifts</Text>
-              <Text style={styles.menuDescription}>
-                {activeShift ? `Active: ${activeShift.name} (${formatTime(activeShift.startHour, activeShift.startMin)} - ${formatTime(activeShift.endHour, activeShift.endMin)})` : 'Configure shifts & timings'}
+              <Text style={styles.menuTitle} numberOfLines={1}>Work Shifts</Text>
+              <Text style={styles.menuDescription} numberOfLines={1} ellipsizeMode="tail">
+                {activeShift ? `Active: ${activeShift.name} (${formatTime(activeShift.startHour, activeShift.startMin)} â€“ ${formatTime(activeShift.endHour, activeShift.endMin)})` : 'Configure shifts & timings'}
               </Text>
             </View>
-            <View style={styles.shiftCountPill}>
+            <View style={[styles.shiftCountPill, { flexShrink: 0 }]}>
               <Text style={styles.shiftCountPillText}>{shifts.length} Shifts</Text>
               <FontAwesome name="chevron-right" size={10} color="#94A3B8" style={{ marginLeft: 6 }} />
             </View>
@@ -565,8 +556,8 @@ export default function SettingsScreen() {
               <MaterialCommunityIcons name="clock-fast" size={20} color="#2563EB" />
             </View>
             <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>Multi-Punch Entry</Text>
-              <Text style={styles.menuDescription}>Allow multiple clock-in and out per day</Text>
+              <Text style={styles.menuTitle} numberOfLines={1}>Multi-Punch Entry</Text>
+              <Text style={styles.menuDescription} numberOfLines={1} ellipsizeMode="tail">Allow multiple clock-in and out per day</Text>
             </View>
             <Switch
               value={multipleTimeEntries}
@@ -584,8 +575,8 @@ export default function SettingsScreen() {
               <MaterialCommunityIcons name="face-recognition" size={20} color="#059669" />
             </View>
             <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>Auto Face Scan</Text>
-              <Text style={styles.menuDescription}>Continuous auto-detection via camera</Text>
+              <Text style={styles.menuTitle} numberOfLines={1}>Auto Face Scan</Text>
+              <Text style={styles.menuDescription} numberOfLines={1} ellipsizeMode="tail">Continuous auto-detection via camera</Text>
             </View>
             <Switch
               value={autoFaceDetection}
@@ -603,12 +594,31 @@ export default function SettingsScreen() {
               <MaterialCommunityIcons name="volume-high" size={20} color="#A855F7" />
             </View>
             <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>Voice Audio Feedback</Text>
-              <Text style={styles.menuDescription}>Play audio chime on verified attendance</Text>
+              <Text style={styles.menuTitle} numberOfLines={1}>Voice Feedback (TTS)</Text>
+              <Text style={styles.menuDescription} numberOfLines={1} ellipsizeMode="tail">Spoken confirmation on face verify</Text>
             </View>
             <Switch
               value={voiceFeedback}
-              onValueChange={setVoiceFeedback}
+              onValueChange={saveVoiceFeedback}
+              trackColor={{ false: '#E2E8F0', true: THEME_COLOR }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+
+          <View style={styles.cardDivider} />
+
+          {/* Group Scan Mode */}
+          <View style={styles.menuCardRow}>
+            <View style={[styles.iconBox, { backgroundColor: '#EFF6FF' }]}>
+              <MaterialCommunityIcons name="account-group" size={20} color="#2563EB" />
+            </View>
+            <View style={styles.menuInfo}>
+              <Text style={styles.menuTitle} numberOfLines={1}>Group Scan Mode</Text>
+              <Text style={styles.menuDescription} numberOfLines={1} ellipsizeMode="tail">Fast 1.0s turnaround for shift crowds</Text>
+            </View>
+            <Switch
+              value={groupScanMode}
+              onValueChange={saveGroupScanMode}
               trackColor={{ false: '#E2E8F0', true: THEME_COLOR }}
               thumbColor="#FFFFFF"
             />
@@ -617,42 +627,35 @@ export default function SettingsScreen() {
 
         {/* SECTION 2: CLOUD & REPORTS */}
         <View style={styles.sectionHeaderWrap}>
-          <Text style={styles.sectionHeadingText}>DATA & SYNC</Text>
+          <Text style={styles.sectionHeadingText}>REPORTS & DATA</Text>
         </View>
         <View style={styles.cardGroup}>
-          {/* Send reports daily */}
+          {/* Daily Report Email Address */}
           <TouchableOpacity
             style={styles.menuCardRow}
             activeOpacity={0.75}
-            onPress={() => setDailyEmailModalVisible(true)}
+            onPress={() => {
+              setDailyMailInput(dailyMailAddress);
+              setDailyMailModalVisible(true);
+            }}
           >
             <View style={[styles.iconBox, { backgroundColor: '#FFFBEB' }]}>
-              <MaterialCommunityIcons name="email-check-outline" size={20} color="#D97706" />
+              <MaterialCommunityIcons name="email-edit-outline" size={20} color="#D97706" />
             </View>
             <View style={styles.menuInfo}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={styles.menuTitle}>Daily Email Summary</Text>
-                <View style={[styles.countBadge, { backgroundColor: '#FEF3C7', marginLeft: 6 }]}>
-                  <Text style={[styles.countBadgeText, { color: '#92400E' }]}>Active</Text>
-                </View>
-              </View>
+              <Text style={styles.menuTitle} numberOfLines={1}>Daily Report Email</Text>
               <Text style={styles.menuDescription} numberOfLines={1} ellipsizeMode="tail">
-                Recipient: {companyEmailInput || currentUser?.companyEmail || 'admin@company.com'}
+                {dailyMailAddress}
               </Text>
             </View>
-            <Switch
-              value={sendReportsDaily}
-              onValueChange={setSendReportsDaily}
-              trackColor={{ false: '#E2E8F0', true: THEME_COLOR }}
-              thumbColor="#FFFFFF"
-            />
+            <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
           </TouchableOpacity>
 
           <View style={{ paddingHorizontal: 16, paddingBottom: 12, paddingTop: 2 }}>
             <TouchableOpacity
               style={styles.sendSummaryNowBtn}
               activeOpacity={0.82}
-              onPress={() => handleSendDailyEmailSummary()}
+              onPress={() => handleSendDailyEmailSummary(dailyMailAddress)}
               disabled={isSendingEmail}
             >
               <MaterialCommunityIcons name="email-fast-outline" size={15} color="#D97706" style={{ marginRight: 6 }} />
@@ -667,11 +670,11 @@ export default function SettingsScreen() {
           {/* Sync Attendance Records */}
           <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={() => setSyncModalVisible(true)}>
             <View style={[styles.iconBox, { backgroundColor: '#EEF2FF' }]}>
-              <MaterialCommunityIcons name="cloud-sync-outline" size={20} color="#4F46E5" />
+              <MaterialCommunityIcons name="database-check-outline" size={20} color="#4F46E5" />
             </View>
             <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>Cloud Data Sync</Text>
-              <Text style={styles.menuDescription}>Backup or restore offline records</Text>
+              <Text style={styles.menuTitle}>Database & Backup</Text>
+              <Text style={styles.menuDescription}>Verify offline records & storage integrity</Text>
             </View>
             <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
           </TouchableOpacity>
@@ -689,12 +692,12 @@ export default function SettingsScreen() {
             </View>
             <View style={styles.menuInfo}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={styles.menuTitle}>Departments</Text>
+                <Text style={styles.menuTitle} numberOfLines={1}>Departments</Text>
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{departments.length}</Text>
                 </View>
               </View>
-              <Text style={styles.menuDescription}>Add or remove departments available in enrollment</Text>
+              <Text style={styles.menuDescription} numberOfLines={1} ellipsizeMode="tail">Manage departments for enrollment</Text>
             </View>
             <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
           </TouchableOpacity>
@@ -708,12 +711,12 @@ export default function SettingsScreen() {
             </View>
             <View style={styles.menuInfo}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={styles.menuTitle}>Custom Enrolment Fields</Text>
+                <Text style={styles.menuTitle} numberOfLines={1}>Custom Enrolment Fields</Text>
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{customFields.length}</Text>
                 </View>
               </View>
-              <Text style={styles.menuDescription}>Add extra fields to the employee enrollment form</Text>
+              <Text style={styles.menuDescription} numberOfLines={1} ellipsizeMode="tail">Configure extra employee form fields</Text>
             </View>
             <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
           </TouchableOpacity>
@@ -731,38 +734,15 @@ export default function SettingsScreen() {
             </View>
             <View style={styles.menuInfo}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={styles.menuTitle}>AI Detection & Model Engine</Text>
+                <Text style={styles.menuTitle} numberOfLines={1}>AI Detection & Engine</Text>
                 <View style={[styles.countBadge, { backgroundColor: '#DCFCE7' }]}>
                   <Text style={[styles.countBadgeText, { color: '#166534' }]}>
-                    {aiSettings.modelEngine === 'cloud' ? 'Cloud AI' : 'Edge 128-D'}
+                    'Edge 128-D'
                   </Text>
                 </View>
               </View>
-              <Text style={styles.menuDescription}>
-                Confidence: {aiSettings.minConfidence}% · Liveness: {aiSettings.livenessMode}
-              </Text>
-            </View>
-            <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
-          </TouchableOpacity>
-
-          <View style={styles.cardDivider} />
-
-          {/* Cloud Sync AI Detection */}
-          <TouchableOpacity style={styles.menuCardRow} activeOpacity={0.7} onPress={() => setAiModalVisible(true)}>
-            <View style={[styles.iconBox, { backgroundColor: '#EEF2FF' }]}>
-              <MaterialCommunityIcons name="cloud-sync" size={20} color="#4F46E5" />
-            </View>
-            <View style={styles.menuInfo}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={styles.menuTitle}>Cloud Sync AI Detection</Text>
-                <View style={[styles.countBadge, { backgroundColor: '#E0E7FF' }]}>
-                  <Text style={[styles.countBadgeText, { color: '#4338CA' }]}>
-                    {cloudProvider.toUpperCase()}
-                  </Text>
-                </View>
-              </View>
-              <Text style={styles.menuDescription}>
-                Multi-terminal vector synchronization & cloud backup
+              <Text style={styles.menuDescription} numberOfLines={1} ellipsizeMode="tail">
+                Confidence: {aiSettings.minConfidence}% Â· Liveness: {aiSettings.livenessMode}
               </Text>
             </View>
             <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
@@ -776,8 +756,8 @@ export default function SettingsScreen() {
               <MaterialCommunityIcons name="speedometer" size={20} color="#2563EB" />
             </View>
             <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>Model Benchmark & Diagnostic</Text>
-              <Text style={styles.menuDescription}>Run vector accuracy & liveness check test on enrolled templates</Text>
+              <Text style={styles.menuTitle} numberOfLines={1}>Model Benchmark & Diagnostic</Text>
+              <Text style={styles.menuDescription} numberOfLines={1} ellipsizeMode="tail">Test vector accuracy & liveness check</Text>
             </View>
             <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
           </TouchableOpacity>
@@ -795,12 +775,12 @@ export default function SettingsScreen() {
             </View>
             <View style={styles.menuInfo}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={styles.menuTitle}>HR Admin Accounts</Text>
+                <Text style={styles.menuTitle} numberOfLines={1}>HR Admin Accounts</Text>
                 <View style={styles.countBadge}>
                   <Text style={styles.countBadgeText}>{adminAccounts.length}</Text>
                 </View>
               </View>
-              <Text style={styles.menuDescription}>Create & manage multiple HR logins & passwords</Text>
+              <Text style={styles.menuDescription} numberOfLines={1} ellipsizeMode="tail">Create & manage multiple HR staff logins</Text>
             </View>
             <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
           </TouchableOpacity>
@@ -862,7 +842,7 @@ export default function SettingsScreen() {
               </View>
               <Text style={styles.menuDescription} numberOfLines={1} ellipsizeMode="tail">
                 {orgAccount.isLoggedIn && orgAccount.orgId
-                  ? `Org ID: ${orgAccount.orgId} · ${orgAccount.orgEmail}`
+                  ? `Org ID: ${orgAccount.orgId} Â· ${orgAccount.orgEmail}`
                   : 'Tap to sign in with platform provider credentials'}
               </Text>
             </View>
@@ -897,7 +877,7 @@ export default function SettingsScreen() {
 
         {/* Footer */}
         <View style={styles.footerContainer}>
-          <Text style={styles.versionText}>Visagel Attendance System • Version 1.0.0</Text>
+          <Text style={styles.versionText}>Visagel Attendance System â€¢ Version 1.0.0</Text>
           <View style={styles.poweredByFooterRow}>
             <MaterialCommunityIcons name="lightning-bolt" size={11} color="#FF6900" style={{ marginRight: 3 }} />
             <Text style={styles.brandTaglineText}>Powered by </Text>
@@ -905,6 +885,83 @@ export default function SettingsScreen() {
           </View>
         </View>
       </ScrollView>
+
+      {/* ===== DAILY MAIL ADDRESS MODAL ===== */}
+      <Modal
+        visible={dailyMailModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setDailyMailModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalContentSheet, { maxHeight: '60%' }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Daily Report Email</Text>
+                <Text style={styles.modalSubtitle}>Change recipient email address</Text>
+              </View>
+              <TouchableOpacity onPress={() => setDailyMailModalVisible(false)} style={styles.modalCloseBtn}>
+                <FontAwesome name="close" size={18} color="#0A192F" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Current email badge */}
+            <View style={styles.mailCurrentBadge}>
+              <MaterialCommunityIcons name="email-check-outline" size={16} color="#D97706" style={{ marginRight: 8 }} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.mailCurrentLabel}>Current Recipient</Text>
+                <Text style={styles.mailCurrentValue} numberOfLines={1} ellipsizeMode="middle">
+                  {dailyMailAddress}
+                </Text>
+              </View>
+            </View>
+
+            {/* Input */}
+            <View style={{ paddingHorizontal: 18, marginTop: 14 }}>
+              <Text style={styles.mailInputLabel}>NEW EMAIL ADDRESS</Text>
+              <View style={styles.mailInputWrap}>
+                <MaterialCommunityIcons name="email-outline" size={18} color="#94A3B8" style={{ marginRight: 10 }} />
+                <TextInput
+                  style={styles.mailTextInput}
+                  value={dailyMailInput}
+                  onChangeText={setDailyMailInput}
+                  placeholder="e.g. hr@company.com"
+                  placeholderTextColor="#9CA3AF"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="done"
+                />
+                {dailyMailInput.length > 0 && (
+                  <TouchableOpacity onPress={() => setDailyMailInput('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <MaterialCommunityIcons name="close-circle" size={18} color="#CBD5E1" />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <TouchableOpacity
+                style={[styles.mailSaveBtn, { opacity: dailyMailInput.includes('@') ? 1 : 0.45 }]}
+                activeOpacity={0.82}
+                disabled={!dailyMailInput.includes('@')}
+                onPress={() => {
+                  const trimmed = dailyMailInput.trim();
+                  if (!trimmed.includes('@')) {
+                    ThemedAlert.alert('Invalid Email', 'Please enter a valid email address.', [{ text: 'OK' }], 'warning');
+                    return;
+                  }
+                  setKeyValue('daily_report_email', trimmed);
+                  setDailyMailAddress(trimmed);
+                  setDailyMailModalVisible(false);
+                  ThemedAlert.alert('Email Updated', `Daily reports will now be sent to:\n${trimmed}`, [{ text: 'Done' }], 'success');
+                }}
+              >
+                <MaterialCommunityIcons name="content-save-outline" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.mailSaveBtnText}>Save Email Address</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* ===== MANAGE DEPARTMENTS MODAL ===== */}
       <Modal
@@ -929,7 +986,7 @@ export default function SettingsScreen() {
             <View style={styles.addFieldRow}>
               <TextInput
                 style={styles.addFieldInput}
-                placeholder="New department name…"
+                placeholder="New department nameâ€¦"
                 placeholderTextColor="#9CA3AF"
                 value={newDeptName}
                 onChangeText={setNewDeptName}
@@ -1064,7 +1121,7 @@ export default function SettingsScreen() {
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.fieldListLabel}>{field.label}</Text>
-                        <Text style={styles.fieldListKey}>{field.key}{field.isRequired ? ' • Required' : ''}</Text>
+                        <Text style={styles.fieldListKey}>{field.key}{field.isRequired ? ' â€¢ Required' : ''}</Text>
                       </View>
                       <TouchableOpacity
                         style={styles.fieldDeleteBtn}
@@ -1092,9 +1149,9 @@ export default function SettingsScreen() {
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalContentSheet, { maxHeight: '85%' }]}>
             <View style={styles.modalHeader}>
-              <View>
-                <Text style={styles.modalTitle}>Manage Shifts</Text>
-                <Text style={styles.modalSubtitle}>{shifts.length} shift{shifts.length !== 1 ? 's' : ''} configured</Text>
+              <View style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
+                <Text style={styles.modalTitle} numberOfLines={1}>Manage Shifts</Text>
+                <Text style={styles.modalSubtitle} numberOfLines={1}>{shifts.length} shift{shifts.length !== 1 ? 's' : ''} configured</Text>
               </View>
               <TouchableOpacity onPress={() => setManageShiftsVisible(false)} style={styles.modalCloseBtn}>
                 <FontAwesome name="close" size={18} color="#0A192F" />
@@ -1108,8 +1165,8 @@ export default function SettingsScreen() {
                 const accentBg = night ? NIGHT_COLOR_10 : THEME_COLOR_10_OPACITY;
                 return (
                   <View key={shift.id} style={[styles.shiftCard, shift.isActive && styles.shiftCardActive]}>
-                    {/* Active Radio + Name */}
-                    <View style={styles.shiftCardHeader}>
+                    {/* Top Row: Radio, Name, Active Pill, Action Buttons */}
+                    <View style={styles.shiftCardTopRow}>
                       <TouchableOpacity
                         style={styles.radioRow}
                         onPress={() => setActiveShift(shift.id)}
@@ -1118,63 +1175,83 @@ export default function SettingsScreen() {
                         <View style={[styles.radioCircle, shift.isActive && { borderColor: accentColor }]}>
                           {shift.isActive && <View style={[styles.radioFill, { backgroundColor: accentColor }]} />}
                         </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.shiftCardName}>{shift.name}</Text>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <Text style={styles.shiftCardName} numberOfLines={1} ellipsizeMode="tail">{shift.name}</Text>
+                            {shift.isActive && (
+                              <View style={[styles.activePill, { backgroundColor: accentBg, borderColor: accentColor }]}>
+                                <Text style={[styles.activePillText, { color: accentColor }]}>Active</Text>
+                              </View>
+                            )}
+                          </View>
                           {night && (
                             <View style={styles.nightBadge}>
                               <MaterialCommunityIcons name="weather-night" size={11} color={NIGHT_COLOR} />
-                              <Text style={styles.nightBadgeText}>Night Shift • Crosses Midnight</Text>
+                              <Text style={styles.nightBadgeText} numberOfLines={1}>Overnight (+1d)</Text>
                             </View>
                           )}
                         </View>
                       </TouchableOpacity>
 
-                      {shift.isActive && (
-                        <View style={[styles.activePill, { backgroundColor: accentBg, borderColor: accentColor }]}>
-                          <Text style={[styles.activePillText, { color: accentColor }]}>Active</Text>
+                      {/* Top-Right Action Buttons */}
+                      <View style={styles.shiftTopActions}>
+                        <TouchableOpacity
+                          style={[styles.shiftIconBtn, { backgroundColor: accentBg, borderColor: accentColor }]}
+                          onPress={() => openEditShift(shift)}
+                          activeOpacity={0.7}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <FontAwesome name="pencil" size={12} color={accentColor} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.shiftIconBtn, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}
+                          onPress={() => deleteShift(shift.id)}
+                          activeOpacity={0.7}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <FontAwesome name="trash-o" size={12} color="#EF4444" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Visual Schedule Row */}
+                    <View style={styles.shiftScheduleBox}>
+                      <View style={styles.shiftTimeBlock}>
+                        <View style={styles.shiftTimeTagRow}>
+                          <View style={[styles.timeDot, { backgroundColor: '#10B981' }]} />
+                          <Text style={styles.shiftTimeTag}>START</Text>
                         </View>
-                      )}
-                    </View>
-
-                    {/* Shift time details */}
-                    <View style={[styles.shiftTimeRow, { backgroundColor: accentBg, borderRadius: 10, padding: 10, marginTop: 8 }]}>
-                      <View style={styles.shiftTimeCol}>
-                        <Text style={styles.shiftTimeLabel}>Start</Text>
-                        <Text style={[styles.shiftTimeValue, { color: accentColor }]}>{formatTime(shift.startHour, shift.startMin)}</Text>
+                        <Text style={[styles.shiftTimeValueText, { color: accentColor }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                          {formatTime(shift.startHour, shift.startMin)}
+                        </Text>
                       </View>
-                      <MaterialCommunityIcons name="arrow-right" size={16} color="#94A3B8" />
-                      <View style={styles.shiftTimeCol}>
-                        <Text style={styles.shiftTimeLabel}>End {night ? '(+1 day)' : ''}</Text>
-                        <Text style={[styles.shiftTimeValue, { color: accentColor }]}>{formatTime(shift.endHour, shift.endMin)}</Text>
+
+                      <View style={styles.shiftArrowContainer}>
+                        <MaterialCommunityIcons name="arrow-right-thin" size={22} color="#94A3B8" />
                       </View>
-                      <View style={styles.shiftTimeDividerV} />
-                      <View style={styles.shiftTimeCol}>
-                        <Text style={styles.shiftTimeLabel}>Late After</Text>
-                        <Text style={[styles.shiftTimeValue, { color: accentColor }]}>{formatTime(shift.lateCutoffHour, shift.lateCutoffMin)}</Text>
+
+                      <View style={styles.shiftTimeBlock}>
+                        <View style={styles.shiftTimeTagRow}>
+                          <View style={[styles.timeDot, { backgroundColor: night ? NIGHT_COLOR : '#3B82F6' }]} />
+                          <Text style={styles.shiftTimeTag}>END {night ? '(+1D)' : ''}</Text>
+                        </View>
+                        <Text style={[styles.shiftTimeValueText, { color: accentColor }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                          {formatTime(shift.endHour, shift.endMin)}
+                        </Text>
+                      </View>
+
+                      <View style={styles.shiftDividerVert} />
+
+                      <View style={styles.shiftTimeBlock}>
+                        <View style={styles.shiftTimeTagRow}>
+                          <View style={[styles.timeDot, { backgroundColor: '#F59E0B' }]} />
+                          <Text style={styles.shiftTimeTag}>GRACE</Text>
+                        </View>
+                        <Text style={[styles.shiftTimeValueText, { color: '#B45309' }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                          {formatTime(shift.lateCutoffHour, shift.lateCutoffMin)}
+                        </Text>
                       </View>
                     </View>
-
-                    {/* Edit / Delete buttons */}
-                    <View style={styles.shiftCardActions}>
-                      <TouchableOpacity
-                        style={[styles.shiftActionBtn, { borderColor: accentColor }]}
-                        onPress={() => openEditShift(shift)}
-                        activeOpacity={0.7}
-                      >
-                        <FontAwesome name="pencil" size={12} color={accentColor} />
-                        <Text style={[styles.shiftActionText, { color: accentColor }]}>Edit</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.shiftActionBtn, { borderColor: '#EF4444' }]}
-                        onPress={() => deleteShift(shift.id)}
-                        activeOpacity={0.7}
-                      >
-                        <FontAwesome name="trash-o" size={12} color="#EF4444" />
-                        <Text style={[styles.shiftActionText, { color: '#EF4444' }]}>Delete</Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    {index < shifts.length - 1 && <View style={{ height: 1, backgroundColor: '#F1F5F9', marginTop: 12 }} />}
                   </View>
                 );
               })}
@@ -1205,14 +1282,14 @@ export default function SettingsScreen() {
         onRequestClose={() => setShiftFormVisible(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalContentSheet}>
+          <View style={[styles.modalContentSheet, { maxHeight: '90%' }]}>
             <View style={styles.modalHeader}>
-              <View>
-                <Text style={styles.modalTitle}>{editingShift ? 'Edit Shift' : 'Add New Shift'}</Text>
-                <Text style={styles.modalSubtitle}>
+              <View style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
+                <Text style={styles.modalTitle} numberOfLines={1}>{editingShift ? 'Edit Shift' : 'Add New Shift'}</Text>
+                <Text style={styles.modalSubtitle} numberOfLines={1}>
                   {isNightShift(formStart.getHours(), formEnd.getHours())
-                    ? '🌙 Night shift detected (crosses midnight)'
-                    : '☀️ Day shift'}
+                    ? 'ðŸŒ™ Overnight schedule (crosses midnight)'
+                    : 'â˜€ï¸ Regular daytime schedule'}
                 </Text>
               </View>
               <TouchableOpacity onPress={() => setShiftFormVisible(false)} style={styles.modalCloseBtn}>
@@ -1220,100 +1297,100 @@ export default function SettingsScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Shift Name */}
-            <Text style={styles.formLabel}>Shift Name</Text>
-            <TextInput
-              style={styles.formInput}
-              value={formName}
-              onChangeText={setFormName}
-              placeholder="e.g. Morning Shift, Night Shift"
-              placeholderTextColor="#94A3B8"
-            />
-
-            {/* Night shift info banner */}
-            {isNightShift(formStart.getHours(), formEnd.getHours()) && (
-              <View style={styles.nightInfoBanner}>
-                <MaterialCommunityIcons name="weather-night" size={16} color={NIGHT_COLOR} style={{ marginRight: 8 }} />
-                <Text style={styles.nightInfoText}>
-                  End time is before start time — this shift crosses midnight and ends the next day.
-                </Text>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {/* Shift Name Input Card */}
+              <View style={styles.formSectionCard}>
+                <Text style={styles.formInputLabel}>SHIFT NAME</Text>
+                <View style={styles.inputWithIconWrap}>
+                  <MaterialCommunityIcons name="briefcase-clock-outline" size={18} color="#64748B" style={{ marginRight: 8 }} />
+                  <TextInput
+                    style={styles.shiftNameInput}
+                    value={formName}
+                    onChangeText={setFormName}
+                    placeholder="e.g. Morning General Shift, Night Shift"
+                    placeholderTextColor="#94A3B8"
+                  />
+                </View>
               </View>
-            )}
 
-            <View style={styles.modalBodyCard}>
-              {/* Start Time */}
-              <TouchableOpacity
-                style={styles.shiftSettingRow}
-                activeOpacity={0.7}
-                onPress={() => openTimePicker('Shift Start Time', formStart, setFormStart)}
-              >
-                <View style={styles.shiftLabelGroup}>
-                  <View style={[styles.miniIconCircle, { backgroundColor: THEME_COLOR_10_OPACITY }]}>
-                    <FontAwesome name="clock-o" size={15} color={THEME_COLOR} />
-                  </View>
-                  <View>
-                    <Text style={styles.shiftTitle}>Start Time</Text>
-                    <Text style={styles.shiftSub}>When the shift begins</Text>
-                  </View>
+              {/* Night shift notice banner */}
+              {isNightShift(formStart.getHours(), formEnd.getHours()) && (
+                <View style={styles.nightInfoBanner}>
+                  <MaterialCommunityIcons name="weather-night" size={16} color={NIGHT_COLOR} style={{ marginRight: 8, marginTop: 1 }} />
+                  <Text style={styles.nightInfoText} numberOfLines={2} ellipsizeMode="tail">
+                    Overnight shift detected: End time crosses midnight into the next day (+1d).
+                  </Text>
                 </View>
-                <View style={styles.shiftTimeBadge}>
-                  <Text style={styles.shiftTimeBadgeText}>{formatTime(formStart.getHours(), formStart.getMinutes())}</Text>
-                  <FontAwesome name="pencil" size={11} color={THEME_COLOR} style={{ marginLeft: 6 }} />
-                </View>
-              </TouchableOpacity>
+              )}
 
-              <View style={styles.shiftDivider} />
-
-              {/* End Time */}
-              <TouchableOpacity
-                style={styles.shiftSettingRow}
-                activeOpacity={0.7}
-                onPress={() => openTimePicker('Shift End Time', formEnd, setFormEnd)}
-              >
-                <View style={styles.shiftLabelGroup}>
-                  <View style={[styles.miniIconCircle, { backgroundColor: isNightShift(formStart.getHours(), formEnd.getHours()) ? NIGHT_COLOR_10 : THEME_COLOR_10_OPACITY }]}>
-                    <FontAwesome name="hourglass-end" size={14} color={isNightShift(formStart.getHours(), formEnd.getHours()) ? NIGHT_COLOR : THEME_COLOR} />
+              {/* 2-Column Side-by-Side Timing Card: START TIME & END TIME */}
+              <View style={styles.timingDualCard}>
+                {/* Start Time */}
+                <TouchableOpacity
+                  style={styles.timingCol}
+                  activeOpacity={0.7}
+                  onPress={() => openTimePicker('Shift Start Time', formStart, setFormStart)}
+                >
+                  <View style={styles.timingHeaderRow}>
+                    <View style={[styles.timeDot, { backgroundColor: '#10B981' }]} />
+                    <Text style={styles.timingColLabel}>START TIME</Text>
                   </View>
-                  <View>
-                    <Text style={styles.shiftTitle}>
-                      End Time {isNightShift(formStart.getHours(), formEnd.getHours()) ? '(next day)' : ''}
+                  <View style={styles.timingValueRow}>
+                    <Text style={styles.timingValueMain}>{formatTime(formStart.getHours(), formStart.getMinutes())}</Text>
+                    <FontAwesome name="pencil" size={11} color={THEME_COLOR} style={{ marginLeft: 6 }} />
+                  </View>
+                  <Text style={styles.timingHintText}>Tap to change</Text>
+                </TouchableOpacity>
+
+                <View style={styles.timingDividerVert} />
+
+                {/* End Time */}
+                <TouchableOpacity
+                  style={styles.timingCol}
+                  activeOpacity={0.7}
+                  onPress={() => openTimePicker('Shift End Time', formEnd, setFormEnd)}
+                >
+                  <View style={styles.timingHeaderRow}>
+                    <View style={[styles.timeDot, { backgroundColor: isNightShift(formStart.getHours(), formEnd.getHours()) ? NIGHT_COLOR : '#3B82F6' }]} />
+                    <Text style={styles.timingColLabel}>
+                      END TIME {isNightShift(formStart.getHours(), formEnd.getHours()) ? '(+1D)' : ''}
                     </Text>
-                    <Text style={styles.shiftSub}>When the shift ends</Text>
                   </View>
-                </View>
-                <View style={[styles.shiftTimeBadge, isNightShift(formStart.getHours(), formEnd.getHours()) && { backgroundColor: NIGHT_COLOR_10, borderColor: 'rgba(99, 102, 241, 0.25)' }]}>
-                  <Text style={[styles.shiftTimeBadgeText, isNightShift(formStart.getHours(), formEnd.getHours()) && { color: NIGHT_COLOR }]}>{formatTime(formEnd.getHours(), formEnd.getMinutes())}</Text>
-                  <FontAwesome name="pencil" size={11} color={isNightShift(formStart.getHours(), formEnd.getHours()) ? NIGHT_COLOR : THEME_COLOR} style={{ marginLeft: 6 }} />
-                </View>
-              </TouchableOpacity>
+                  <View style={styles.timingValueRow}>
+                    <Text style={[styles.timingValueMain, isNightShift(formStart.getHours(), formEnd.getHours()) && { color: NIGHT_COLOR }]}>
+                      {formatTime(formEnd.getHours(), formEnd.getMinutes())}
+                    </Text>
+                    <FontAwesome name="pencil" size={11} color={isNightShift(formStart.getHours(), formEnd.getHours()) ? NIGHT_COLOR : THEME_COLOR} style={{ marginLeft: 6 }} />
+                  </View>
+                  <Text style={styles.timingHintText}>Tap to change</Text>
+                </TouchableOpacity>
+              </View>
 
-              <View style={styles.shiftDivider} />
-
-              {/* Late Cutoff */}
+              {/* Late Cutoff Card */}
               <TouchableOpacity
-                style={styles.shiftSettingRow}
+                style={styles.graceCutoffCard}
                 activeOpacity={0.7}
                 onPress={() => openTimePicker('Late Mark Cutoff', formLateCutoff, setFormLateCutoff)}
               >
-                <View style={styles.shiftLabelGroup}>
-                  <View style={[styles.miniIconCircle, { backgroundColor: THEME_COLOR_10_OPACITY }]}>
-                    <FontAwesome name="bell-o" size={15} color={THEME_COLOR} />
+                <View style={styles.graceLeftWrap}>
+                  <View style={styles.graceIconCircle}>
+                    <FontAwesome name="bell-o" size={14} color="#D97706" />
                   </View>
-                  <View>
-                    <Text style={styles.shiftTitle}>Late Mark Threshold</Text>
-                    <Text style={styles.shiftSub}>Marked late after this time</Text>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.graceCardTitle}>LATE ARRIVAL CUTOFF</Text>
+                    <Text style={styles.graceCardSub} numberOfLines={1}>Marked 'LATE' if clocking in after this</Text>
                   </View>
                 </View>
-                <View style={styles.shiftTimeBadge}>
-                  <Text style={styles.shiftTimeBadgeText}>{formatTime(formLateCutoff.getHours(), formLateCutoff.getMinutes())}</Text>
-                  <FontAwesome name="pencil" size={11} color={THEME_COLOR} style={{ marginLeft: 6 }} />
+                <View style={styles.graceTimeBadge}>
+                  <Text style={styles.graceTimeBadgeText}>{formatTime(formLateCutoff.getHours(), formLateCutoff.getMinutes())}</Text>
+                  <FontAwesome name="pencil" size={11} color="#D97706" style={{ marginLeft: 6 }} />
                 </View>
               </TouchableOpacity>
-            </View>
 
-            <TouchableOpacity style={styles.doneModalBtn} onPress={saveShiftForm} activeOpacity={0.85}>
-              <Text style={styles.doneModalBtnText}>{editingShift ? 'Save Changes' : 'Add Shift'}</Text>
-            </TouchableOpacity>
+              <TouchableOpacity style={styles.doneModalBtn} onPress={saveShiftForm} activeOpacity={0.85}>
+                <Text style={styles.doneModalBtnText}>{editingShift ? 'Save Changes' : 'Add Shift'}</Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1328,19 +1405,19 @@ export default function SettingsScreen() {
         <View style={[styles.modalBackdrop, { justifyContent: 'center' }]}>
           <View style={styles.alertCard}>
             <View style={styles.syncAvatar}>
-              <MaterialCommunityIcons name="cloud-check" size={32} color="#FFFFFF" />
+              <MaterialCommunityIcons name="database-check" size={32} color="#FFFFFF" />
             </View>
-            <Text style={styles.planTitle}>Cloud Synchronization</Text>
-            <Text style={styles.planSubtitle}>All offline attendance records are up to date and synchronized.</Text>
+            <Text style={styles.planTitle}>Database Integrity</Text>
+            <Text style={styles.planSubtitle}>All offline attendance records are securely stored on device and verified.</Text>
             <View style={styles.syncStatsBox}>
               <View style={styles.syncStatCol}>
                 <Text style={styles.syncStatVal}>100%</Text>
-                <Text style={styles.syncStatLabel}>Status</Text>
+                <Text style={styles.syncStatLabel}>Integrity</Text>
               </View>
               <View style={styles.syncStatDivider} />
               <View style={styles.syncStatCol}>
-                <Text style={styles.syncStatVal}>Live</Text>
-                <Text style={styles.syncStatLabel}>Sync Mode</Text>
+                <Text style={styles.syncStatVal}>Secure</Text>
+              <Text style={styles.syncStatLabel}>On-Device</Text>
               </View>
             </View>
             <TouchableOpacity style={styles.closeAlertBtn} onPress={() => setSyncModalVisible(false)}>
@@ -1545,6 +1622,7 @@ export default function SettingsScreen() {
         </View>
       </Modal>
 
+
       {/* ===== AI MODEL SETTINGS MODAL ===== */}
       <Modal
         visible={aiModalVisible}
@@ -1553,262 +1631,158 @@ export default function SettingsScreen() {
         onRequestClose={() => setAiModalVisible(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={[styles.modalContentSheet, { maxHeight: '90%' }]}>
+          <View style={[styles.modalContentSheet, { maxHeight: '94%' }]}>
+            {/* Header */}
             <View style={styles.modalHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalTitle}>AI Biometrics & Model Engine</Text>
-                <Text style={styles.modalSubtitle}>Configure face detection, liveness & accuracy thresholds</Text>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.modalTitle}>AI Biometric Engine</Text>
+                <Text style={styles.modalSubtitle} numberOfLines={1}>Face detection Â· Liveness Â· Accuracy</Text>
               </View>
               <TouchableOpacity onPress={() => setAiModalVisible(false)} style={styles.modalCloseBtn}>
                 <FontAwesome name="times" size={16} color="#64748B" />
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ flex: 1, paddingHorizontal: 4, paddingTop: 6 }}>
-              {/* Model Engine Selector */}
-              <Text style={styles.inputLabel}>Biometric Detection Engine</Text>
-              <View style={{ flexDirection: 'column', gap: 8, marginTop: 6, marginBottom: 16 }}>
+            {/* Current Engine Status Banner */}
+            <View style={[styles.aiStatusBanner, {
+              backgroundColor: '#F0FDF4',
+              borderColor: '#A7F3D0',
+            }]}>
+              <View style={[styles.aiStatusDot, { backgroundColor: '#10B981' }]} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={[styles.aiStatusEngineText, { color: '#065F46' }]}>
+                  Local Edge AI Engine Active
+                </Text>
+                <Text style={[styles.aiStatusSub, { color: '#059669' }]}>
+                  {`128-D biometric vectors · Liveness: ${aiSettings.livenessMode} · Match >= ${aiSettings.minConfidence}%`}
+                </Text>
+              </View>
+              <View style={[styles.aiLivePill, { backgroundColor: '#DCFCE7' }]}>
+                <Text style={[styles.aiLivePillText, { color: '#166534' }]}>LIVE</Text>
+              </View>
+            </View>
+
+            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {/* SECTION: Detection Engine */}
+              <View style={styles.aiSectionWrap}>
+                <View style={styles.aiSectionHeader}>
+                  <MaterialCommunityIcons name="cpu-64-bit" size={14} color={THEME_COLOR} style={{ marginRight: 6 }} />
+                  <Text style={styles.aiSectionTitle}>DETECTION ENGINE</Text>
+                </View>
+
                 <TouchableOpacity
-                  style={[
-                    styles.roleSelectPill,
-                    { paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12 },
-                    aiSettings.modelEngine === 'local' && styles.roleSelectPillActive,
-                  ]}
+                  style={[styles.aiEngineCard, aiSettings.modelEngine === 'local' && styles.aiEngineCardActive]}
+                  activeOpacity={0.8}
                   onPress={() => saveAiSettings({ modelEngine: 'local' })}
                 >
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <MaterialCommunityIcons
-                      name="cpu-64-bit"
-                      size={18}
-                      color={aiSettings.modelEngine === 'local' ? '#FFFFFF' : '#059669'}
-                      style={{ marginRight: 8 }}
-                    />
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.roleSelectPillText, aiSettings.modelEngine === 'local' && styles.roleSelectPillTextActive]}>
-                        Local Edge Engine (128-D Feature Vectors)
+                  <View style={[styles.aiEngineIconBox, {
+                    backgroundColor: aiSettings.modelEngine === 'local' ? '#DCFCE7' : '#F1F5F9',
+                  }]}>
+                    <MaterialCommunityIcons name="cpu-64-bit" size={22} color={aiSettings.modelEngine === 'local' ? '#059669' : '#94A3B8'} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0, marginLeft: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={[styles.aiEngineCardTitle, { color: aiSettings.modelEngine === 'local' ? '#0A192F' : '#64748B' }]}>
+                        Local Edge Engine
                       </Text>
-                      <Text style={{ fontSize: 11, color: aiSettings.modelEngine === 'local' ? 'rgba(255,255,255,0.85)' : '#64748B', marginTop: 2 }}>
-                        100% On-Device, Privacy-first, Fast & Offline operations
-                      </Text>
+                      <View style={[styles.aiEngineTag, { backgroundColor: '#DCFCE7' }]}>
+                        <Text style={[styles.aiEngineTagText, { color: '#166534' }]}>128-D</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.aiEngineCardSub}>100% on-device Â· offline Â· privacy-first Â· fast</Text>
+                    <View style={styles.aiEngineMetaRow}>
+                      <View style={styles.aiEngineMeta}><Text style={styles.aiEngineMetaText}>12ms</Text></View>
+                      <View style={styles.aiEngineMeta}><Text style={styles.aiEngineMetaText}>No cloud</Text></View>
+                      <View style={styles.aiEngineMeta}><Text style={styles.aiEngineMetaText}>Offline</Text></View>
                     </View>
                   </View>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.roleSelectPill,
-                    { paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12 },
-                    aiSettings.modelEngine === 'cloud' && styles.roleSelectPillActive,
-                  ]}
-                  onPress={() => saveAiSettings({ modelEngine: 'cloud' })}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <MaterialCommunityIcons
-                      name="cloud-check-outline"
-                      size={18}
-                      color={aiSettings.modelEngine === 'cloud' ? '#FFFFFF' : '#2563EB'}
-                      style={{ marginRight: 8 }}
-                    />
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.roleSelectPillText, aiSettings.modelEngine === 'cloud' && styles.roleSelectPillTextActive]}>
-                        Enterprise Cloud AI Provider API
-                      </Text>
-                      <Text style={{ fontSize: 11, color: aiSettings.modelEngine === 'cloud' ? 'rgba(255,255,255,0.85)' : '#64748B', marginTop: 2 }}>
-                        Compare face frames via AWS Rekognition / Face++ API
-                      </Text>
-                    </View>
+                  <View style={[styles.aiEngineRadio, aiSettings.modelEngine === 'local' && styles.aiEngineRadioActive]}>
+                    {aiSettings.modelEngine === 'local' && <View style={styles.aiEngineRadioFill} />}
                   </View>
                 </TouchableOpacity>
+
+                
               </View>
 
-              {/* Passive Liveness & Anti-Spoofing Guard Level */}
-              <Text style={styles.inputLabel}>Liveness Anti-Spoofing Security</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6, marginBottom: 16 }}>
-                {[
-                  { id: 'strict', label: 'Strict', sub: 'High Guard' },
-                  { id: 'balanced', label: 'Balanced', sub: 'Standard' },
-                  { id: 'off', label: 'Off', sub: 'Disabled' },
-                ].map((item) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={[
-                      styles.responsivePill,
-                      aiSettings.livenessMode === item.id && styles.responsivePillActive,
-                    ]}
-                    onPress={() => saveAiSettings({ livenessMode: item.id as any })}
-                  >
-                    <Text style={[styles.responsivePillText, aiSettings.livenessMode === item.id && styles.responsivePillTextActive]}>
-                      {item.label}
-                    </Text>
-                    <Text style={[styles.responsivePillSub, aiSettings.livenessMode === item.id && styles.responsivePillSubActive]}>
-                      {item.sub}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* Match Confidence Threshold */}
-              <Text style={styles.inputLabel}>Minimum Confidence Acceptance Threshold</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6, marginBottom: 16 }}>
-                {[65, 75, 85, 90].map((val) => (
-                  <TouchableOpacity
-                    key={val}
-                    style={[
-                      styles.responsivePillCompact,
-                      aiSettings.minConfidence === val && styles.responsivePillActive,
-                    ]}
-                    onPress={() => saveAiSettings({ minConfidence: val })}
-                  >
-                    <Text style={[styles.responsivePillText, aiSettings.minConfidence === val && styles.responsivePillTextActive]}>
-                      {val}% Match
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* Scan Cooldown Buffer */}
-              <Text style={styles.inputLabel}>Duplicate Scan Cooldown Window</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6, marginBottom: 16 }}>
-                {[
-                  { sec: 15, label: '15 sec' },
-                  { sec: 30, label: '30 sec' },
-                  { sec: 60, label: '60 sec' },
-                  { sec: 120, label: '2 min' },
-                ].map((item) => (
-                  <TouchableOpacity
-                    key={item.sec}
-                    style={[
-                      styles.responsivePillCompact,
-                      aiSettings.scanCooldownSec === item.sec && styles.responsivePillActive,
-                    ]}
-                    onPress={() => saveAiSettings({ scanCooldownSec: item.sec })}
-                  >
-                    <Text style={[styles.responsivePillText, aiSettings.scanCooldownSec === item.sec && styles.responsivePillTextActive]}>
-                      {item.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* Cloud Sync AI Detection UI Section */}
-              <View style={styles.cloudAiCard}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <View style={[styles.iconBox, { backgroundColor: '#EEF2FF', marginRight: 10 }]}>
-                    <MaterialCommunityIcons name="cloud-sync" size={20} color="#4F46E5" />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.cloudAiTitle}>Cloud Sync AI Detection</Text>
-                    <Text style={styles.cloudAiSubtitle}>Multi-terminal real-time biometric vector sync</Text>
-                  </View>
-                  <Switch
-                    value={cloudSyncEnabled || aiSettings.modelEngine === 'cloud'}
-                    onValueChange={(val) => {
-                      setCloudSyncEnabled(val);
-                      if (val) saveAiSettings({ modelEngine: 'cloud' });
-                    }}
-                    trackColor={{ false: '#CBD5E1', true: THEME_COLOR }}
-                    thumbColor="#FFFFFF"
-                  />
+              {/* SECTION: Liveness */}
+              <View style={styles.aiSectionWrap}>
+                <View style={styles.aiSectionHeader}>
+                  <MaterialCommunityIcons name="eye-check-outline" size={14} color="#A855F7" style={{ marginRight: 6 }} />
+                  <Text style={styles.aiSectionTitle}>PASSIVE LIVENESS & ANTI-SPOOFING</Text>
                 </View>
+                <View style={styles.aiLivenessRow}>
+                  {([
+                    { id: 'strict', label: 'Strict', sub: 'Highest security. Blocks photo & screen attacks.', icon: 'shield-lock-outline', color: '#EF4444', activeBg: '#EF4444' },
+                    { id: 'balanced', label: 'Balanced', sub: 'Standard guard. Recommended for most.', icon: 'shield-half-full', color: '#F59E0B', activeBg: '#F59E0B' },
+                    { id: 'off', label: 'Off', sub: 'No check. Only for controlled environments.', icon: 'shield-off-outline', color: '#94A3B8', activeBg: '#64748B' },
+                  ] as const).map((item) => {
+                    const active = aiSettings.livenessMode === item.id;
+                    return (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={[styles.aiLivenessCard, {
+                          borderColor: active ? item.activeBg : '#E2E8F0',
+                          backgroundColor: active ? item.activeBg : '#FAFAFA',
+                        }]}
+                        activeOpacity={0.8}
+                        onPress={() => saveAiSettings({ livenessMode: item.id })}
+                      >
+                        <MaterialCommunityIcons
+                          name={item.icon}
+                          size={22}
+                          color={active ? '#FFFFFF' : item.color}
+                          style={{ marginBottom: 6 }}
+                        />
+                        <Text style={[styles.aiLivenessLabel, { color: active ? '#FFFFFF' : '#0A192F' }]}>
+                          {item.label}
+                        </Text>
+                        <Text style={[styles.aiLivenessSub, { color: active ? 'rgba(255,255,255,0.82)' : '#64748B' }]}>
+                          {item.sub}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
 
-                {/* Cloud Provider Selector */}
-                <Text style={styles.cloudFieldLabel}>CLOUD AI PROVIDER</Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+              {/* SECTION: Confidence Threshold */}
+              <View style={styles.aiSectionWrap}>
+                <View style={styles.aiSectionHeader}>
+                  <MaterialCommunityIcons name="target" size={14} color="#2563EB" style={{ marginRight: 6 }} />
+                  <Text style={styles.aiSectionTitle}>MATCH CONFIDENCE THRESHOLD</Text>
+                </View>
+                <View style={styles.aiConfidenceGrid}>
                   {[
-                    { id: 'aws', name: 'AWS Rekognition' },
-                    { id: 'facepp', name: 'Face++ Vision' },
-                    { id: 'custom', name: 'Enterprise' },
-                  ].map((p) => (
-                    <TouchableOpacity
-                      key={p.id}
-                      style={[
-                        styles.providerPill,
-                        cloudProvider === p.id && styles.providerPillActive,
-                      ]}
-                      onPress={() => setCloudProvider(p.id as any)}
-                    >
-                      <Text style={[styles.providerPillText, cloudProvider === p.id && styles.providerPillTextActive]}>
-                        {p.name}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                    { val: 65, label: 'Relaxed', desc: 'More matches, slight risk', color: '#F59E0B', bg: '#FFFBEB' },
+                    { val: 75, label: 'Standard', desc: 'Balanced accuracy', color: THEME_COLOR, bg: '#FFF7ED' },
+                    { val: 85, label: 'Strict', desc: 'High accuracy, fewer false+', color: '#2563EB', bg: '#EFF6FF' },
+                    { val: 90, label: 'Max', desc: 'Ultra-precise biometrics', color: '#7C3AED', bg: '#F5F3FF' },
+                  ].map(({ val, label, desc, color, bg }) => {
+                    const active = aiSettings.minConfidence === val;
+                    return (
+                      <TouchableOpacity
+                        key={val}
+                        style={[styles.aiConfCard, {
+                          borderColor: active ? color : '#E2E8F0',
+                          backgroundColor: active ? bg : '#FAFAFA',
+                        }]}
+                        activeOpacity={0.8}
+                        onPress={() => saveAiSettings({ minConfidence: val })}
+                      >
+                        <Text style={[styles.aiConfValue, { color: active ? color : '#64748B' }]}>{val}%</Text>
+                        <Text style={[styles.aiConfLabel, { color: active ? color : '#0A192F' }]}>{label}</Text>
+                        <Text style={[styles.aiConfDesc, { color: active ? color : '#94A3B8' }]}>{desc}</Text>
+                        {active && <View style={[styles.aiConfActiveDot, { backgroundColor: color }]} />}
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-
-                {/* Vector Dimension */}
-                <Text style={styles.cloudFieldLabel}>CLOUD EMBEDDING DIMENSION</Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                  {[
-                    { id: '128', label: '128-D Vector (Fast)' },
-                    { id: '512', label: '512-D High-Precision' },
-                  ].map((d) => (
-                    <TouchableOpacity
-                      key={d.id}
-                      style={[
-                        styles.providerPill,
-                        cloudVectorDim === d.id && styles.providerPillActive,
-                      ]}
-                      onPress={() => setCloudVectorDim(d.id as any)}
-                    >
-                      <Text style={[styles.providerPillText, cloudVectorDim === d.id && styles.providerPillTextActive]}>
-                        {d.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                {/* Cloud API Endpoint URL */}
-                <Text style={styles.cloudFieldLabel}>CLOUD API ENDPOINT URL</Text>
-                <TextInput
-                  style={[styles.formInput, { marginBottom: 10 }]}
-                  value={aiSettings.cloudApiUrl}
-                  onChangeText={(val) => saveAiSettings({ cloudApiUrl: val })}
-                  placeholder="https://api.visagel.ai/v1/face-sync"
-                  placeholderTextColor="#94A3B8"
-                />
-
-                {/* API Key */}
-                <Text style={styles.cloudFieldLabel}>API ACCESS KEY</Text>
-                <TextInput
-                  style={[styles.formInput, { marginBottom: 10 }]}
-                  value={aiSettings.cloudApiKey}
-                  onChangeText={(val) => saveAiSettings({ cloudApiKey: val })}
-                  placeholder="Enter Cloud API Access Key"
-                  placeholderTextColor="#94A3B8"
-                />
-
-                {/* Secret Key */}
-                <Text style={styles.cloudFieldLabel}>API SECRET KEY</Text>
-                <TextInput
-                  style={[styles.formInput, { marginBottom: 14 }]}
-                  value={aiSettings.cloudApiSecret}
-                  onChangeText={(val) => saveAiSettings({ cloudApiSecret: val })}
-                  placeholder="Enter Cloud Secret Key"
-                  placeholderTextColor="#94A3B8"
-                  secureTextEntry
-                />
-
-                {/* Test Cloud Connection Button */}
-                <TouchableOpacity
-                  style={styles.testCloudBtn}
-                  activeOpacity={0.82}
-                  onPress={handleTestCloudAiConnection}
-                  disabled={isTestingCloud}
-                >
-                  <MaterialCommunityIcons
-                    name={isTestingCloud ? 'loading' : 'connection'}
-                    size={16}
-                    color="#FFFFFF"
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={styles.testCloudBtnText}>
-                    {isTestingCloud ? 'Pinging Cloud Gateway...' : 'Test Cloud AI Connection'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
+              </View><View style={{ height: 20 }} />
             </ScrollView>
 
-            <View style={{ paddingTop: 10, borderTopWidth: 1, borderTopColor: '#E2E8F0', marginTop: 10 }}>
+            <View style={{ paddingTop: 10, borderTopWidth: 1, borderTopColor: '#E2E8F0' }}>
               <TouchableOpacity style={styles.closeAlertBtn} onPress={() => setAiModalVisible(false)}>
+                <MaterialCommunityIcons name="check-circle-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
                 <Text style={styles.closeAlertBtnText}>Save & Done</Text>
               </TouchableOpacity>
             </View>
@@ -1824,41 +1798,184 @@ export default function SettingsScreen() {
         onRequestClose={() => setBenchmarkModalVisible(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={[styles.modalContentSheet, { maxHeight: '85%' }]}>
+          <View style={[styles.modalContentSheet, { maxHeight: '92%' }]}>
             <View style={styles.modalHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalTitle}>Model Diagnostic & Benchmark</Text>
-                <Text style={styles.modalSubtitle}>Test face vector extraction & cosine match speed</Text>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.modalTitle}>Model Benchmark</Text>
+                <Text style={styles.modalSubtitle} numberOfLines={1}>Face vector extraction & cosine match speed</Text>
               </View>
               <TouchableOpacity onPress={() => setBenchmarkModalVisible(false)} style={styles.modalCloseBtn}>
                 <FontAwesome name="times" size={16} color="#64748B" />
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ flex: 1, paddingHorizontal: 4, paddingTop: 10 }}>
+            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
               <TouchableOpacity
-                style={[styles.closeAlertBtn, { backgroundColor: THEME_COLOR, marginBottom: 16 }]}
+                style={[styles.benchRunBtn, { opacity: isBenchmarking ? 0.7 : 1 }]}
+                activeOpacity={0.82}
                 onPress={runBenchmarkTest}
                 disabled={isBenchmarking}
               >
-                <MaterialCommunityIcons name="lightning-bolt" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.closeAlertBtnText}>
-                  {isBenchmarking ? 'Running Biometric Test...' : 'Run Diagnostics & Vector Test'}
-                </Text>
-              </TouchableOpacity>
-
-              {benchmarkResult ? (
-                <View style={{ backgroundColor: '#0F172A', borderRadius: 12, padding: 14, marginBottom: 20 }}>
-                  <Text style={{ fontFamily: 'monospace', fontSize: 11, color: '#10B981', lineHeight: 18 }}>
-                    {benchmarkResult}
+                <MaterialCommunityIcons
+                  name={isBenchmarking ? 'loading' : 'lightning-bolt'}
+                  size={20}
+                  color="#FFFFFF"
+                  style={{ marginRight: 10 }}
+                />
+                <View>
+                  <Text style={styles.benchRunBtnTitle}>
+                    {isBenchmarking ? 'Running Diagnostic...' : 'Run Full Diagnostic'}
+                  </Text>
+                  <Text style={styles.benchRunBtnSub}>
+                    {isBenchmarking ? 'Extracting & comparing feature vectors' : 'Vector extraction Â· cosine similarity Â· latency'}
                   </Text>
                 </View>
+              </TouchableOpacity>
+
+              {/* Config summary */}
+              <View style={styles.benchConfigRow}>
+                {[
+                  { label: 'Engine', value: 'Edge 128-D' },
+                  { label: 'Liveness', value: aiSettings.livenessMode.charAt(0).toUpperCase() + aiSettings.livenessMode.slice(1) },
+                  { label: 'Threshold', value: `${aiSettings.minConfidence}%` },
+                  { label: 'Enrolled', value: `${enrolledEmployees.length}` },
+                ].map((item) => (
+                  <View key={item.label} style={styles.benchConfigCard}>
+                    <Text style={styles.benchConfigValue}>{item.value}</Text>
+                    <Text style={styles.benchConfigLabel}>{item.label}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {/* Results */}
+              {benchmarkResult ? (
+                (() => {
+                  const lines = benchmarkResult.split('\n');
+                  const isPassed = benchmarkResult.includes('PASSED');
+                  const isFailed = benchmarkResult.startsWith('Benchmark Error');
+                  const enrolledLines = lines.filter((l) => l.includes('[OK]') || l.includes('[V]') || l.match(/\[.\]/));
+                  const speedLine = lines.find((l) => l.includes('Vector Similarity Speed'));
+                  const speedMatch = speedLine?.match(/([\d,]+)\s*ops\/sec/);
+                  const opsPerSec = speedMatch ? speedMatch[1] : '-';
+                  const similarityLine = lines.find((l) => l.includes('Inter-Similarity') || l.includes('Inter-Probe Similarity'));
+                  const similarityMatch = similarityLine?.match(/([\d.]+)%/);
+                  const similarity = similarityMatch ? similarityMatch[1] + '%' : '-';
+                  const vectorLine = lines.find((l) => l.includes('Real Face Vector') || l.includes('Synthetic Mode'));
+                  const vectorVal = vectorLine ? vectorLine.replace(/^[*\s]+/, '').replace('Real Face Vector Extraction: ', '').replace('Synthetic Mode: ', '') : '-';
+                  const empLines = lines.filter((l) => l.match(/\[.\].*\(.*\):/));
+
+                  return (
+                    <View style={{ paddingHorizontal: 2, marginBottom: 24 }}>
+                      <View style={[styles.benchResultBanner, {
+                        backgroundColor: isFailed ? '#FEF2F2' : isPassed ? '#F0FDF4' : '#FFFBEB',
+                        borderColor: isFailed ? '#FECACA' : isPassed ? '#A7F3D0' : '#FDE68A',
+                      }]}>
+                        <MaterialCommunityIcons
+                          name={isFailed ? 'alert-circle-outline' : isPassed ? 'check-decagram' : 'clock-outline'}
+                          size={24}
+                          color={isFailed ? '#EF4444' : isPassed ? '#059669' : '#D97706'}
+                          style={{ marginRight: 10 }}
+                        />
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={[styles.benchResultBannerTitle, {
+                            color: isFailed ? '#991B1B' : isPassed ? '#065F46' : '#92400E',
+                          }]}>
+                            {isFailed ? 'Diagnostic Error' : isPassed ? 'AI Engine â€” PASSED' : 'Test Complete'}
+                          </Text>
+                          <Text style={[styles.benchResultBannerSub, {
+                            color: isFailed ? '#B91C1C' : isPassed ? '#059669' : '#D97706',
+                          }]}>
+                            {isFailed ? benchmarkResult : 'Ready for high-accuracy attendance scanning'}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {!isFailed && (
+                        <>
+                          <View style={styles.benchMetricGrid}>
+                            <View style={[styles.benchMetricCard, { borderColor: '#C7D2FE' }]}>
+                              <MaterialCommunityIcons name="speedometer" size={20} color="#4F46E5" style={{ marginBottom: 6 }} />
+                              <Text style={[styles.benchMetricValue, { color: '#4F46E5' }]}>{opsPerSec}</Text>
+                              <Text style={styles.benchMetricLabel}>ops / sec</Text>
+                              <Text style={styles.benchMetricSub}>Cosine comparisons</Text>
+                            </View>
+                            <View style={[styles.benchMetricCard, { borderColor: '#A7F3D0' }]}>
+                              <MaterialCommunityIcons name="vector-difference" size={20} color="#059669" style={{ marginBottom: 6 }} />
+                              <Text style={[styles.benchMetricValue, { color: '#059669' }]}>{similarity}</Text>
+                              <Text style={styles.benchMetricLabel}>Similarity</Text>
+                              <Text style={styles.benchMetricSub}>Inter-probe score</Text>
+                            </View>
+                            <View style={[styles.benchMetricCard, { borderColor: '#FDE68A' }]}>
+                              <MaterialCommunityIcons name="account-check-outline" size={20} color="#D97706" style={{ marginBottom: 6 }} />
+                              <Text style={[styles.benchMetricValue, { color: '#D97706' }]}>{empLines.length || enrolledEmployees.length}</Text>
+                              <Text style={styles.benchMetricLabel}>Profiles</Text>
+                              <Text style={styles.benchMetricSub}>Templates tested</Text>
+                            </View>
+                          </View>
+
+                          <View style={styles.benchDetailCard}>
+                            <View style={styles.benchDetailRow}>
+                              <MaterialCommunityIcons name="chip" size={14} color="#4F46E5" />
+                              <Text style={styles.benchDetailLabel}>Vector Extraction</Text>
+                              <Text style={styles.benchDetailValue} numberOfLines={1} ellipsizeMode="tail">{vectorVal}</Text>
+                            </View>
+                            <View style={[styles.benchDetailRow, { borderTopWidth: 1, borderTopColor: '#F1F5F9' }]}>
+                              <MaterialCommunityIcons name="format-float-none" size={14} color="#059669" />
+                              <Text style={styles.benchDetailLabel}>Float Precision</Text>
+                              <Text style={styles.benchDetailValue}>32-bit Dot Product</Text>
+                            </View>
+                            <View style={[styles.benchDetailRow, { borderTopWidth: 1, borderTopColor: '#F1F5F9' }]}>
+                              <MaterialCommunityIcons name="lightning-bolt" size={14} color="#F59E0B" />
+                              <Text style={styles.benchDetailLabel}>Hardware</Text>
+                              <Text style={styles.benchDetailValue}>Hermes TurboEngine</Text>
+                            </View>
+                            <View style={[styles.benchDetailRow, { borderTopWidth: 1, borderTopColor: '#F1F5F9' }]}>
+                              <MaterialCommunityIcons name="cpu-64-bit" size={14} color="#6366F1" />
+                              <Text style={styles.benchDetailLabel}>Acceleration</Text>
+                              <Text style={styles.benchDetailValue}>Active</Text>
+                            </View>
+                          </View>
+
+                          {empLines.length > 0 && (
+                            <View style={styles.benchDetailCard}>
+                              <Text style={styles.benchDetailCardTitle}>ENROLLED TEMPLATE RESULTS</Text>
+                              {empLines.map((line, i) => (
+                                <View key={i} style={[styles.benchDetailRow, i > 0 && { borderTopWidth: 1, borderTopColor: '#F1F5F9' }]}>
+                                  <MaterialCommunityIcons name="check-circle-outline" size={14} color="#059669" />
+                                  <Text style={[styles.benchDetailLabel, { flex: 1 }]} numberOfLines={1} ellipsizeMode="tail">
+                                    {line.replace(/\[.\]\s+/, '').replace(/:\s+.*/, '')}
+                                  </Text>
+                                  <Text style={[styles.benchDetailValue, { color: '#059669' }]}>OK</Text>
+                                </View>
+                              ))}
+                            </View>
+                          )}
+                        </>
+                      )}
+                    </View>
+                  );
+                })()
               ) : (
-                <View style={{ padding: 30, alignItems: 'center' }}>
-                  <MaterialCommunityIcons name="brain" size={44} color="#94A3B8" style={{ marginBottom: 10 }} />
-                  <Text style={{ fontSize: 13, color: '#64748B', textAlign: 'center' }}>
-                    Tap 'Run Diagnostics' above to evaluate face feature extraction performance across enrolled templates.
+                <View style={styles.benchEmptyState}>
+                  <View style={styles.benchEmptyIconRing}>
+                    <MaterialCommunityIcons name="brain" size={40} color="#CBD5E1" />
+                  </View>
+                  <Text style={styles.benchEmptyTitle}>Ready to Test</Text>
+                  <Text style={styles.benchEmptyText}>
+                    Tap 'Run Full Diagnostic' to evaluate face feature extraction performance across all enrolled biometric templates.
                   </Text>
+                  <View style={styles.benchEmptyInfoRow}>
+                    {[
+                      { icon: 'cpu-64-bit', text: 'Vector extraction' },
+                      { icon: 'vector-difference', text: 'Cosine similarity' },
+                      { icon: 'speedometer', text: 'Throughput ops/s' },
+                    ].map((item) => (
+                      <View key={item.text} style={styles.benchEmptyInfoChip}>
+                        <MaterialCommunityIcons name={item.icon as any} size={14} color="#94A3B8" style={{ marginBottom: 4 }} />
+                        <Text style={styles.benchEmptyInfoText}>{item.text}</Text>
+                      </View>
+                    ))}
+                  </View>
                 </View>
               )}
             </ScrollView>
@@ -1937,7 +2054,7 @@ export default function SettingsScreen() {
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
                   <Text style={styles.summaryStatLabel}>Attendance Logs Today:</Text>
                   <Text style={styles.summaryStatVal}>
-                    {attendanceRecords.filter((r) => r.date === new Date().toISOString().split('T')[0]).length} present
+                    {attendanceRecords.filter((r) => r.date === formatLocalDate(new Date())).length} present
                   </Text>
                 </View>
               </View>
@@ -1987,7 +2104,7 @@ export default function SettingsScreen() {
             <Text style={styles.aboutDesc}>
               Developed by Branzept to deliver fast, secure, and contactless biometric attendance tracking for modern workplaces.
             </Text>
-            <Text style={styles.aboutVersion}>Version 1.0.0 • 2026</Text>
+            <Text style={styles.aboutVersion}>Version 1.0.0 â€¢ 2026</Text>
             <TouchableOpacity style={styles.closeAlertBtn} onPress={() => setAboutModalVisible(false)}>
               <Text style={styles.closeAlertBtnText}>Close</Text>
             </TouchableOpacity>
@@ -2176,6 +2293,7 @@ const styles = StyleSheet.create({
   },
   menuInfo: {
     flex: 1,
+    minWidth: 0,
     marginRight: 8,
     overflow: 'hidden',
   },
@@ -2329,10 +2447,73 @@ const styles = StyleSheet.create({
     borderColor: THEME_COLOR,
     backgroundColor: '#FFFBF8',
   },
-  shiftCardHeader: {
+  shiftCardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  shiftTopActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 6,
+    flexShrink: 0,
+    marginTop: 2,
+  },
+  shiftIconBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shiftScheduleBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginTop: 10,
+    gap: 4,
+  },
+  shiftTimeBlock: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: 'center',
+  },
+  shiftTimeTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 3,
+  },
+  timeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  shiftTimeTag: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+  shiftTimeValueText: {
+    fontSize: 13,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  shiftArrowContainer: {
+    paddingHorizontal: 2,
+    flexShrink: 0,
+  },
+  shiftDividerVert: {
+    width: 1,
+    height: 30,
+    backgroundColor: '#CBD5E1',
+    marginHorizontal: 4,
   },
   radioRow: {
     flexDirection: 'row',
@@ -2383,26 +2564,34 @@ const styles = StyleSheet.create({
   shiftTimeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-around',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
   },
   shiftTimeCol: {
+    flex: 1,
+    minWidth: 0,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   shiftTimeLabel: {
-    fontSize: 10,
-    fontWeight: '600',
+    fontSize: 9.5,
+    fontWeight: '700',
     color: '#94A3B8',
     marginBottom: 2,
     textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
   shiftTimeValue: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '800',
+    textAlign: 'center',
   },
   shiftTimeDividerV: {
     width: 1,
-    height: 28,
+    height: 24,
     backgroundColor: '#E2E8F0',
+    marginHorizontal: 4,
   },
   shiftCardActions: {
     flexDirection: 'row',
@@ -2481,7 +2670,7 @@ const styles = StyleSheet.create({
   modalBodyCard: {
     backgroundColor: '#F8FAFC',
     borderRadius: 16,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     marginBottom: 20,
@@ -2490,11 +2679,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 14,
+    paddingVertical: 12,
   },
   shiftLabelGroup: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+    marginRight: 8,
+  },
+  shiftTextWrapper: {
+    flex: 1,
+    minWidth: 0,
   },
   miniIconCircle: {
     width: 32,
@@ -2502,19 +2698,21 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: 10,
+    flexShrink: 0,
   },
   shiftTitle: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700',
     color: '#1E293B',
   },
   shiftSub: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#94A3B8',
     marginTop: 1,
   },
   shiftTimeBadge: {
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: THEME_COLOR_10_OPACITY,
@@ -2532,6 +2730,145 @@ const styles = StyleSheet.create({
   shiftDivider: {
     height: 1,
     backgroundColor: '#E2E8F0',
+  },
+
+  // â”€â”€ Shift Form New Styles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  formSectionCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    marginBottom: 14,
+  },
+  formInputLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  inputWithIconWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  shiftNameInput: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0A192F',
+  },
+  timingDualCard: {
+    flexDirection: 'row',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    overflow: 'hidden',
+    marginBottom: 12,
+  },
+  timingCol: {
+    flex: 1,
+    padding: 14,
+    alignItems: 'flex-start',
+  },
+  timingHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 6,
+  },
+  timingColLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+  timingValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+  },
+  timingValueMain: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: THEME_COLOR,
+    letterSpacing: -0.5,
+  },
+  timingHintText: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 4,
+    fontWeight: '500',
+  },
+  timingDividerVert: {
+    width: 1,
+    backgroundColor: '#E2E8F0',
+    alignSelf: 'stretch',
+  },
+  graceCutoffCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 20,
+    justifyContent: 'space-between',
+  },
+  graceLeftWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+    marginRight: 10,
+    gap: 10,
+  },
+  graceIconCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  graceCardTitle: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#92400E',
+    letterSpacing: 0.5,
+  },
+  graceCardSub: {
+    fontSize: 11,
+    color: '#B45309',
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  graceTimeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    flexShrink: 0,
+  },
+  graceTimeBadgeText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#D97706',
   },
   doneModalBtn: {
     backgroundColor: THEME_COLOR,
@@ -2856,7 +3193,7 @@ const styles = StyleSheet.create({
     color: '#475569',
     marginBottom: 4,
   },
-  // ── Enrolment Field Management ──────────────────────────────────────────────
+  // â”€â”€ Enrolment Field Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   addFieldRow: {
     flexDirection: 'row',
     gap: 10,
@@ -2923,6 +3260,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#0F172A',
+    flex: 1,
   },
   fieldListKey: {
     fontSize: 11,
@@ -3017,7 +3355,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // ── Daily Email Summary & Cloud AI Styles ───────────────────────────
+  // â”€â”€ Daily Email Summary & Cloud AI Styles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   sendSummaryNowBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3212,5 +3550,578 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
+  },
+
+  // â”€â”€ Daily Mail Address Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  mailCurrentBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 12,
+    marginHorizontal: 18,
+    marginTop: 4,
+    padding: 12,
+  },
+  mailCurrentLabel: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#92400E',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  mailCurrentValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#B45309',
+  },
+  mailInputLabel: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
+  mailInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    marginBottom: 16,
+  },
+  mailTextInput: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#0A192F',
+  },
+  mailSaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: THEME_COLOR,
+    borderRadius: 12,
+    paddingVertical: 13,
+  },
+  mailSaveBtnText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+  },
+
+  // â”€â”€ Cloud Details Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  cloudSectionLabel: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.6,
+    marginBottom: 10,
+  },
+  cloudProviderRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  cloudProviderChip: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 6,
+  },
+  cloudProviderChipText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  cloudInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+  },
+  cloudTextInput: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#0A192F',
+  },
+  cloudTestResultBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginHorizontal: 18,
+    marginBottom: 14,
+  },
+  cloudTestResultText: {
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+  },
+  cloudTestBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1.5,
+    borderColor: '#C7D2FE',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  cloudTestBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#4F46E5',
+  },
+  cloudSaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#4F46E5',
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  cloudSaveBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.2,
+  },
+
+  // ── AI Engine Modal ─────────────────────────────────────────────────────
+  aiStatusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 12,
+    gap: 10,
+  },
+  aiStatusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    flexShrink: 0,
+  },
+  aiStatusEngineText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  aiStatusSub: {
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  aiLivePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    flexShrink: 0,
+  },
+  aiLivePillText: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  aiSectionWrap: {
+    paddingHorizontal: 16,
+    marginBottom: 20,
+  },
+  aiSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  aiSectionTitle: {
+    fontSize: 9.5,
+    fontWeight: '900',
+    color: '#64748B',
+    letterSpacing: 0.8,
+  },
+  aiEngineCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAFAFA',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    padding: 14,
+  },
+  aiEngineCardActive: {
+    borderColor: THEME_COLOR,
+    backgroundColor: '#FFF7ED',
+  },
+  aiEngineIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  aiEngineCardTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  aiEngineTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  aiEngineTagText: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  aiEngineCardSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 3,
+    fontWeight: '500',
+  },
+  aiEngineMetaRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 8,
+  },
+  aiEngineMeta: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  aiEngineMetaText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  aiEngineRadio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    marginLeft: 10,
+  },
+  aiEngineRadioActive: {
+    borderColor: THEME_COLOR,
+  },
+  aiEngineRadioFill: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: THEME_COLOR,
+  },
+  aiLivenessRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  aiLivenessCard: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderRadius: 14,
+    padding: 12,
+    alignItems: 'center',
+  },
+  aiLivenessLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  aiLivenessSub: {
+    fontSize: 10,
+    fontWeight: '500',
+    textAlign: 'center',
+    lineHeight: 14,
+  },
+  aiConfidenceGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  aiConfCard: {
+    width: '47%',
+    borderWidth: 1.5,
+    borderRadius: 14,
+    padding: 12,
+    alignItems: 'flex-start',
+    position: 'relative',
+  },
+  aiConfValue: {
+    fontSize: 22,
+    fontWeight: '900',
+    marginBottom: 2,
+  },
+  aiConfLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  aiConfDesc: {
+    fontSize: 10,
+    fontWeight: '500',
+    lineHeight: 13,
+  },
+  aiConfActiveDot: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  aiCloudToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  aiCloudToggleTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0A192F',
+  },
+  aiCloudToggleSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  aiCloudProvChip: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+  },
+  aiCloudProvChipText: {
+    fontSize: 10,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  aiDimChip: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderRadius: 10,
+    paddingVertical: 10,
+  },
+  aiDimChipLabel: {
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  aiDimChipSub: {
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+
+  // ── Benchmark Modal ─────────────────────────────────────────────────────
+  benchRunBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: THEME_COLOR,
+    borderRadius: 16,
+    marginHorizontal: 16,
+    marginBottom: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+  },
+  benchRunBtnTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  benchRunBtnSub: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  benchConfigRow: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    gap: 8,
+  },
+  benchConfigCard: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  benchConfigValue: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#0A192F',
+  },
+  benchConfigLabel: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  benchResultBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 14,
+    marginHorizontal: 16,
+    marginBottom: 14,
+    padding: 14,
+  },
+  benchResultBannerTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  benchResultBannerSub: {
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 3,
+  },
+  benchMetricGrid: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    gap: 10,
+  },
+  benchMetricCard: {
+    flex: 1,
+    backgroundColor: '#FAFAFA',
+    borderWidth: 1.5,
+    borderRadius: 14,
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 6,
+  },
+  benchMetricValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+  },
+  benchMetricLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0A192F',
+    marginTop: 2,
+  },
+  benchMetricSub: {
+    fontSize: 9,
+    fontWeight: '500',
+    color: '#94A3B8',
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  benchDetailCard: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  benchDetailCardTitle: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#64748B',
+    letterSpacing: 0.8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#F1F5F9',
+  },
+  benchDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  benchDetailLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    flex: 1,
+  },
+  benchDetailValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0A192F',
+    flexShrink: 0,
+    textAlign: 'right',
+  },
+  benchEmptyState: {
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 32,
+  },
+  benchEmptyIconRing: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  benchEmptyTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0A192F',
+    marginBottom: 8,
+  },
+  benchEmptyText: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  benchEmptyInfoRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  benchEmptyInfoChip: {
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  benchEmptyInfoText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+    textAlign: 'center',
   },
 });

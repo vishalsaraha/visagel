@@ -7,6 +7,7 @@ export {
   PunchRecord,
   EmployeeAttendance,
   ShiftEntry,
+  LeaveRecord,
   DEFAULT_AI_SETTINGS,
   DEFAULT_DEPARTMENTS,
   DEFAULT_SHIFTS,
@@ -19,10 +20,37 @@ import {
   PunchRecord,
   EmployeeAttendance,
   ShiftEntry,
+  LeaveRecord,
   DEFAULT_AI_SETTINGS,
   DEFAULT_DEPARTMENTS,
   DEFAULT_SHIFTS,
+  getEmployeesDb,
+  saveEmployeeDb,
+  deleteEmployeeDb,
+  getAttendanceRecordsDb,
+  saveAttendanceRecordDb,
+  removePunchDb,
+  clearAllAttendanceDb,
+  getShiftsDb,
+  saveShiftsDb,
+  getDepartmentsDb,
+  saveDepartmentsDb,
+  getCustomFieldsDb,
+  saveCustomFieldsDb,
+  getAiSettingsDb,
+  saveAiSettingsDb,
+  getLeavesDb,
+  saveLeaveDb,
+  deleteLeaveDb,
+  isEmployeeOnLeaveDb,
+  getVoiceFeedbackDb,
+  saveVoiceFeedbackDb,
+  getGroupScanModeDb,
+  saveGroupScanModeDb,
+  getKeyValue,
+  setKeyValue,
 } from '@/utils/database';
+import { formatLocalDate } from '@/utils/clockSync';
 
 export interface AttendanceContextType {
   multipleTimeEntries: boolean;
@@ -33,7 +61,19 @@ export interface AttendanceContextType {
   addEnrolledEmployee: (emp: Omit<EnrolledEmployee, 'id'>) => Promise<boolean>;
   updateEnrolledEmployee: (id: string, emp: Partial<EnrolledEmployee>) => Promise<boolean>;
   deleteEnrolledEmployee: (id: string) => Promise<boolean>;
-  recordPunch: (employeeId: string, name: string, department?: string, forcedType?: 'IN' | 'OUT') => { punch: PunchRecord; isNewPunch: boolean; type: 'IN' | 'OUT'; summary: string };
+  recordPunch: (
+    employeeId: string,
+    name: string,
+    department?: string,
+    forcedType?: 'IN' | 'OUT'
+  ) => {
+    punch: PunchRecord;
+    isNewPunch: boolean;
+    type: 'IN' | 'OUT';
+    summary: string;
+    status: 'PRESENT' | 'LATE' | 'HALF_DAY' | 'ON_LEAVE';
+    isLate?: boolean;
+  };
   removePunch: (employeeId: string, date: string, punchId: string) => Promise<void>;
   clearAllRecords: () => Promise<void>;
   getRecordsForDate: (dateStr: string) => EmployeeAttendance[];
@@ -47,6 +87,21 @@ export interface AttendanceContextType {
   saveCustomFields: (fields: CustomField[]) => Promise<void>;
   aiSettings: AiModelSettings;
   saveAiSettings: (settings: Partial<AiModelSettings>) => Promise<void>;
+  voiceFeedback: boolean;
+  saveVoiceFeedback: (enabled: boolean) => Promise<void>;
+  groupScanMode: boolean;
+  saveGroupScanMode: (enabled: boolean) => Promise<void>;
+  leaves: LeaveRecord[];
+  saveLeave: (leave: LeaveRecord) => Promise<void>;
+  deleteLeave: (id: string) => Promise<void>;
+  markEmployeeLeave: (
+    empId: string,
+    empName: string,
+    start: string,
+    end: string,
+    type: 'Casual' | 'Sick' | 'Earned' | 'Unpaid',
+    reason: string
+  ) => Promise<void>;
 }
 
 export const DEFAULT_ENROLLED: EnrolledEmployee[] = [
@@ -58,7 +113,7 @@ export const DEFAULT_ENROLLED: EnrolledEmployee[] = [
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const getTodayDateString = () => new Date().toISOString().split('T')[0];
+const getTodayDateString = () => formatLocalDate(new Date());
 
 const formatTime12h = (date: Date): string => {
   let h = date.getHours();
@@ -68,42 +123,104 @@ const formatTime12h = (date: Date): string => {
   return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')} ${ampm}`;
 };
 
-/** Returns total minutes from midnight for a shift boundary */
-const toMins = (h: number, m: number) => h * 60 + m;
 
 /**
- * Determine punch type (IN/OUT) based on active shift timing.
- *
- * Logic:
- *  - Find the midpoint of the shift (average of start & end, accounting for midnight crossing).
- *  - If current time is in the first half of the shift → IN
- *  - If in the second half → OUT
- *  - No active shift → default to IN for first punch, OUT for second.
+ * Compute working hours from a list of punches by pairing IN→OUT.
+ * Returns a human-readable string like "4 hrs 33 mins".
  */
-function resolvePunchType(shift: ShiftEntry | null, lastPunchType: 'IN' | 'OUT' | null, multipleEntries: boolean): 'IN' | 'OUT' {
-  if (!shift) {
-    // No shift: alternate IN/OUT
-    return lastPunchType === 'IN' ? 'OUT' : 'IN';
+export function computeWorkingHours(punches: PunchRecord[]): string | undefined {
+  let totalMs = 0;
+  let pendingIn: number | null = null;
+  for (const p of punches) {
+    if (p.type === 'IN') {
+      pendingIn = p.timestamp;
+    } else if (p.type === 'OUT' && pendingIn !== null) {
+      const diff = p.timestamp - pendingIn;
+      if (diff > 0) totalMs += diff;
+      pendingIn = null;
+    }
+  }
+  if (totalMs <= 0) return undefined;
+  const totalMins = Math.round(totalMs / 60000);
+  const hrs = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+  if (hrs === 0) return `${mins} min${mins !== 1 ? 's' : ''}`;
+  if (mins === 0) return `${hrs} hr${hrs !== 1 ? 's' : ''}`;
+  return `${hrs} hr${hrs !== 1 ? 's' : ''} ${mins} min${mins !== 1 ? 's' : ''}`;
+}
+
+/** Returns total minutes from midnight for a time */
+export const toMins = (h: number, m: number) => h * 60 + m;
+
+/**
+ * Computes difference in minutes between two clock times on a 24-hour circle.
+ * Always returns a value between 0 and 720 (12 hours).
+ */
+export function clockDiffMins(m1: number, m2: number): number {
+  let diff = Math.abs(m1 - m2);
+  if (diff > 720) diff = 1440 - diff;
+  return diff;
+}
+
+/**
+ * Determine shift-based punch window ('IN' | 'OUT') based on shift start/end timings.
+ * Compares current clock distance to shift start vs shift end:
+ *  - Closer to shift start → 'IN' Window (morning / shift start arrival period)
+ *  - Closer to shift end   → 'OUT' Window (evening / shift departure period)
+ */
+export function getShiftPunchWindow(shift: ShiftEntry | null, punchDate: Date = new Date()): 'IN' | 'OUT' {
+  if (!shift) return 'IN';
+  const nowMins = toMins(punchDate.getHours(), punchDate.getMinutes());
+  const startMins = toMins(shift.startHour, shift.startMin);
+  const endMins = toMins(shift.endHour, shift.endMin);
+
+  const distToStart = clockDiffMins(nowMins, startMins);
+  const distToEnd = clockDiffMins(nowMins, endMins);
+
+  return distToStart <= distToEnd ? 'IN' : 'OUT';
+}
+
+/**
+ * Check if a punch time is past the late cutoff for a shift.
+ * Accurately handles both regular shifts and night shifts crossing midnight.
+ */
+export function isLateForShift(shift: ShiftEntry | null, punchDate: Date = new Date()): boolean {
+  if (!shift) return false;
+  const punchMins = toMins(punchDate.getHours(), punchDate.getMinutes());
+  const startMins = toMins(shift.startHour, shift.startMin);
+  const cutoffMins = toMins(shift.lateCutoffHour, shift.lateCutoffMin);
+
+  // Grace duration after shift start (handles midnight crossing)
+  let graceMins = cutoffMins - startMins;
+  if (graceMins < 0) graceMins += 1440;
+
+  // Signed elapsed minutes from shift start on a 24-hour circle
+  // Negative = arrived early before start; Positive = arrived after start
+  let elapsedMins = punchMins - startMins;
+  if (elapsedMins < -720) elapsedMins += 1440;
+  if (elapsedMins > 720) elapsedMins -= 1440;
+
+  return elapsedMins > graceMins;
+}
+
+/**
+ * Determine punch type (IN/OUT) based on active shift timing and employee punch state.
+ */
+export function resolvePunchType(
+  shift: ShiftEntry | null,
+  lastPunchType: 'IN' | 'OUT' | null,
+  multipleEntries: boolean,
+  punchDate: Date = new Date()
+): 'IN' | 'OUT' {
+  const windowType = getShiftPunchWindow(shift, punchDate);
+
+  // If this is the employee's first punch today: governed strictly by shift timing!
+  if (!lastPunchType) {
+    return windowType;
   }
 
-  const now = new Date();
-  const nowMins = toMins(now.getHours(), now.getMinutes());
-  const startMins = toMins(shift.startHour, shift.startMin);
-  let endMins = toMins(shift.endHour, shift.endMin);
-
-  // Handle midnight crossing for night shifts
-  if (endMins <= startMins) endMins += 24 * 60;
-
-  // Normalise nowMins relative to shift start
-  let relNow = nowMins < startMins ? nowMins + 24 * 60 : nowMins;
-
-  const shiftDuration = endMins - startMins;
-  const halfShift = shiftDuration / 2;
-  const relElapsed = relNow - startMins;
-
-  // IN if in first half of shift, OUT if in second half
-  if (relElapsed < halfShift) return 'IN';
-  return 'OUT';
+  // If multiple entries are allowed or single entry: alternate between IN and OUT
+  return lastPunchType === 'IN' ? 'OUT' : 'IN';
 }
 
 // ── Initial mock data ─────────────────────────────────────────────────────────
@@ -135,7 +252,7 @@ const AttendanceContext = createContext<AttendanceContextType>({
   addEnrolledEmployee: async () => false,
   updateEnrolledEmployee: async () => false,
   deleteEnrolledEmployee: async () => false,
-  recordPunch: () => ({ punch: { id: '', type: 'IN', time: '', timestamp: 0 }, isNewPunch: false, type: 'IN', summary: '' }),
+  recordPunch: () => ({ punch: { id: '', type: 'IN', time: '', timestamp: 0 }, isNewPunch: false, type: 'IN', summary: '', status: 'PRESENT' }),
   removePunch: async () => {},
   clearAllRecords: async () => {},
   getRecordsForDate: () => [],
@@ -149,29 +266,17 @@ const AttendanceContext = createContext<AttendanceContextType>({
   saveCustomFields: async () => {},
   aiSettings: DEFAULT_AI_SETTINGS,
   saveAiSettings: async () => {},
+  voiceFeedback: true,
+  saveVoiceFeedback: async () => {},
+  groupScanMode: false,
+  saveGroupScanMode: async () => {},
+  leaves: [],
+  saveLeave: async () => {},
+  deleteLeave: async () => {},
+  markEmployeeLeave: async () => {},
 });
 
 // ── Provider ──────────────────────────────────────────────────────────────────
-
-import {
-  getEmployeesDb,
-  saveEmployeeDb,
-  deleteEmployeeDb,
-  getAttendanceRecordsDb,
-  saveAttendanceRecordDb,
-  removePunchDb,
-  clearAllAttendanceDb,
-  getShiftsDb,
-  saveShiftsDb,
-  getDepartmentsDb,
-  saveDepartmentsDb,
-  getCustomFieldsDb,
-  saveCustomFieldsDb,
-  getAiSettingsDb,
-  saveAiSettingsDb,
-  getKeyValue,
-  setKeyValue,
-} from '@/utils/database';
 
 export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [multipleTimeEntries, setMultipleTimeEntriesState] = useState(true);
@@ -181,6 +286,9 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [departments, setDepartmentsState] = useState<string[]>(DEFAULT_DEPARTMENTS);
   const [customFields, setCustomFieldsState] = useState<CustomField[]>([]);
   const [aiSettings, setAiSettingsState] = useState<AiModelSettings>(DEFAULT_AI_SETTINGS);
+  const [leaves, setLeavesState] = useState<LeaveRecord[]>([]);
+  const [voiceFeedback, setVoiceFeedbackState] = useState(true);
+  const [groupScanMode, setGroupScanModeState] = useState(false);
 
   // Load SQLite database on mount
   useEffect(() => {
@@ -196,6 +304,9 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setDepartmentsState(getDepartmentsDb());
       setCustomFieldsState(getCustomFieldsDb());
       setAiSettingsState(getAiSettingsDb());
+      setLeavesState(getLeavesDb());
+      setVoiceFeedbackState(getVoiceFeedbackDb());
+      setGroupScanModeState(getGroupScanModeDb());
     } catch (e) {
       console.warn('[AttendanceContext] SQLite load error', e);
     }
@@ -210,6 +321,49 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const updated = { ...aiSettings, ...updates };
     setAiSettingsState(updated);
     saveAiSettingsDb(updates);
+  };
+
+  const saveVoiceFeedback = async (enabled: boolean) => {
+    setVoiceFeedbackState(enabled);
+    saveVoiceFeedbackDb(enabled);
+  };
+
+  const saveGroupScanMode = async (enabled: boolean) => {
+    setGroupScanModeState(enabled);
+    saveGroupScanModeDb(enabled);
+  };
+
+  const saveLeave = async (leave: LeaveRecord) => {
+    saveLeaveDb(leave);
+    setLeavesState(getLeavesDb());
+  };
+
+  const deleteLeave = async (id: string) => {
+    deleteLeaveDb(id);
+    setLeavesState(getLeavesDb());
+  };
+
+  const markEmployeeLeave = async (
+    empId: string,
+    empName: string,
+    start: string,
+    end: string,
+    type: 'Casual' | 'Sick' | 'Earned' | 'Unpaid',
+    reason: string
+  ) => {
+    const leave: LeaveRecord = {
+      id: `leave-${Date.now()}`,
+      employeeId: empId,
+      employeeName: empName,
+      startDate: start,
+      endDate: end,
+      type,
+      reason,
+      status: 'APPROVED',
+      createdAt: Date.now(),
+    };
+    saveLeaveDb(leave);
+    setLeavesState(getLeavesDb());
   };
 
   const saveRecords = async (records: EmployeeAttendance[]) => {
@@ -262,12 +416,29 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return true;
   };
 
-  const getActiveShift = (): ShiftEntry | null =>
-    shifts.find((s) => s.isActive) ?? null;
+  const getActiveShift = (): ShiftEntry | null => {
+    const explicit = shifts.find((s) => s.isActive);
+    if (explicit) return explicit;
+    if (shifts.length === 0) return null;
+
+    // Auto-detect shift closest to current time
+    const now = new Date();
+    const nowMins = toMins(now.getHours(), now.getMinutes());
+    let bestShift = shifts[0];
+    let minDiff = 9999;
+    for (const s of shifts) {
+      const diff = clockDiffMins(nowMins, toMins(s.startHour, s.startMin));
+      if (diff < minDiff) {
+        minDiff = diff;
+        bestShift = s;
+      }
+    }
+    return bestShift;
+  };
 
   const getPunchTypeFromShift = (): 'IN' | 'OUT' => {
     const active = getActiveShift();
-    return resolvePunchType(active, null, multipleTimeEntries);
+    return getShiftPunchWindow(active, new Date());
   };
 
   const recordPunch = (
@@ -275,7 +446,14 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     name: string,
     department?: string,
     forcedType?: 'IN' | 'OUT'
-  ): { punch: PunchRecord; isNewPunch: boolean; type: 'IN' | 'OUT'; summary: string } => {
+  ): {
+    punch: PunchRecord;
+    isNewPunch: boolean;
+    type: 'IN' | 'OUT';
+    summary: string;
+    status: 'PRESENT' | 'LATE' | 'HALF_DAY' | 'ON_LEAVE';
+    isLate?: boolean;
+  } => {
     const today = getTodayDateString();
     const now = new Date();
     const formattedTime = formatTime12h(now);
@@ -286,13 +464,26 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     );
 
     let updatedRecords = [...attendanceRecords];
-    let punchType: 'IN' | 'OUT';
     const activeShift = getActiveShift();
+    const windowType = getShiftPunchWindow(activeShift, now);
 
     if (existingIndex >= 0) {
       const existing = updatedRecords[existingIndex];
       const lastPunch = existing.punches[existing.punches.length - 1];
 
+      // Anti-duplicate protection: If an employee tries to punch again within 60 seconds of their last punch
+      if (timestamp - lastPunch.timestamp < 60000) {
+        return {
+          punch: lastPunch,
+          isNewPunch: false,
+          type: lastPunch.type,
+          summary: `Already clocked ${lastPunch.type === 'IN' ? 'IN' : 'OUT'} (${lastPunch.time})`,
+          status: existing.status,
+          isLate: existing.status === 'LATE',
+        };
+      }
+
+      let punchType: 'IN' | 'OUT';
       if (!multipleTimeEntries) {
         if (existing.punches.length === 1 && existing.punches[0].type === 'IN') {
           punchType = 'OUT';
@@ -301,36 +492,109 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             punch: lastPunch,
             isNewPunch: false,
             type: lastPunch.type,
-            summary: `Already complete (${lastPunch.type} at ${lastPunch.time})`,
+            summary: `Shift completed (${lastPunch.type} at ${lastPunch.time})`,
+            status: existing.status,
+            isLate: existing.status === 'LATE',
           };
         } else {
-          punchType = 'IN';
+          punchType = forcedType ?? (lastPunch.type === 'IN' ? 'OUT' : 'IN');
         }
       } else {
-        // Multi-punch: use shift timing to determine IN/OUT
-        if (forcedType) {
-          punchType = forcedType;
-        } else {
-          punchType = resolvePunchType(activeShift, lastPunch?.type ?? null, true);
-        }
+        // Multi-punch: alternate between IN and OUT
+        punchType = forcedType ?? (lastPunch?.type === 'IN' ? 'OUT' : 'IN');
       }
 
       const newPunch: PunchRecord = { id: `punch-${timestamp}`, type: punchType, time: formattedTime, timestamp };
-      updatedRecords[existingIndex] = { ...existing, punches: [...existing.punches, newPunch] };
+      const updatedPunches = [...existing.punches, newPunch];
+      const workingHours = computeWorkingHours(updatedPunches);
 
+      // Determine attendance status
+      let recordStatus: 'PRESENT' | 'LATE' | 'HALF_DAY' | 'ON_LEAVE' = existing.status;
+
+      // If this is the first IN punch for today, check if late
+      if (punchType === 'IN' && !existing.punches.some((p) => p.type === 'IN')) {
+        const late = isLateForShift(activeShift, now);
+        recordStatus = late ? 'LATE' : 'PRESENT';
+      }
+
+      // If punching OUT, evaluate total working time for half-day status
+      if (punchType === 'OUT') {
+        let totalMs = 0;
+        let pendingIn: number | null = null;
+        for (const p of updatedPunches) {
+          if (p.type === 'IN') pendingIn = p.timestamp;
+          else if (p.type === 'OUT' && pendingIn !== null) {
+            totalMs += p.timestamp - pendingIn;
+            pendingIn = null;
+          }
+        }
+        // Less than 4 hours worked = HALF_DAY
+        if (totalMs > 0 && totalMs < 4 * 3600 * 1000) {
+          recordStatus = 'HALF_DAY';
+        }
+      }
+
+      updatedRecords[existingIndex] = {
+        ...existing,
+        punches: updatedPunches,
+        totalWorkingHours: workingHours,
+        status: recordStatus,
+      };
       saveRecords(updatedRecords);
-      return { punch: newPunch, isNewPunch: true, type: punchType, summary: `${punchType === 'IN' ? 'Time In' : 'Time Out'} (${formattedTime})` };
+
+      const isLate = recordStatus === 'LATE';
+      const summary =
+        punchType === 'IN'
+          ? isLate
+            ? `Time In · Late (${formattedTime})`
+            : `Time In (${formattedTime})`
+          : `Time Out (${formattedTime})${workingHours ? ` · ${workingHours}` : ''}`;
+
+      return {
+        punch: newPunch,
+        isNewPunch: true,
+        type: punchType,
+        summary,
+        status: recordStatus,
+        isLate,
+      };
     } else {
-      // First punch today — always IN (or forced)
-      punchType = forcedType ?? 'IN';
+      // First punch of the day: governed strictly by shift timing!
+      const punchType: 'IN' | 'OUT' = forcedType ?? windowType;
+      const isLate = punchType === 'IN' ? isLateForShift(activeShift, now) : false;
+      const recordStatus: 'PRESENT' | 'LATE' | 'HALF_DAY' =
+        punchType === 'OUT' ? 'HALF_DAY' : isLate ? 'LATE' : 'PRESENT';
+
       const newPunch: PunchRecord = { id: `punch-${timestamp}`, type: punchType, time: formattedTime, timestamp };
       const newRecord: EmployeeAttendance = {
-        id: `att-${timestamp}`, employeeId, name, department, date: today,
-        punches: [newPunch], status: 'PRESENT',
+        id: `att-${timestamp}`,
+        employeeId,
+        name,
+        department,
+        date: today,
+        punches: [newPunch],
+        totalWorkingHours: undefined,
+        status: recordStatus,
       };
+
       updatedRecords = [newRecord, ...updatedRecords];
       saveRecords(updatedRecords);
-      return { punch: newPunch, isNewPunch: true, type: punchType, summary: `Time In (${formattedTime})` };
+
+      const summary =
+        punchType === 'IN'
+          ? isLate
+            ? `Time In · Late (${formattedTime})`
+            : `Time In (${formattedTime})`
+          : `Time Out (${formattedTime})`;
+
+      return {
+        punch: newPunch,
+        isNewPunch: true,
+        type: punchType,
+        summary,
+        status: recordStatus,
+        isLate,
+      };
     }
   };
 
@@ -372,6 +636,14 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         saveCustomFields,
         aiSettings,
         saveAiSettings,
+        voiceFeedback,
+        saveVoiceFeedback,
+        groupScanMode,
+        saveGroupScanMode,
+        leaves,
+        saveLeave,
+        deleteLeave,
+        markEmployeeLeave,
       }}
     >
       {children}

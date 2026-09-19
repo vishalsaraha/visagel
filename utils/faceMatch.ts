@@ -17,9 +17,18 @@ import {
   LivenessMode,
   CloudApiConfig,
   BiometricMatchResult,
+  validateEnrollmentPhotoQuality,
+  PhotoQualityResult,
 } from './faceEngine';
 
-export { BiometricMatchResult, ModelEngineType, LivenessMode, CloudApiConfig };
+export {
+  BiometricMatchResult,
+  ModelEngineType,
+  LivenessMode,
+  CloudApiConfig,
+  validateEnrollmentPhotoQuality,
+  PhotoQualityResult,
+};
 
 export interface FaceMatchOptions {
   minConfidence?: number;     // e.g. 75 (%)

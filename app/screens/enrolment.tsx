@@ -25,6 +25,8 @@ import * as MailComposer from 'expo-mail-composer';
 import AppDateTimePicker from '@/components/AppDateTimePicker';
 import { ThemedAlert } from '@/components/ThemedAlertProvider';
 import { getOrgPlatformAccountDb, deriveCompanyName } from '@/utils/database';
+import { validateEnrollmentPhotoQuality, PhotoQualityResult } from '@/utils/faceMatch';
+import { formatLocalDate } from '@/utils/clockSync';
 
 const THEME_COLOR = '#FF6900';
 const THEME_COLOR_10_OPACITY = 'rgba(255, 105, 0, 0.1)';
@@ -76,6 +78,7 @@ export default function EnrolmentScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [cameraVisible, setCameraVisible] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  const [photoQuality, setPhotoQuality] = useState<PhotoQualityResult | null>(null);
 
   // Face detection overlay animation for Enrolment Camera
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -141,6 +144,28 @@ export default function EnrolmentScreen() {
           shutterSound: false,
         });
         if (photo && photo.uri) {
+          const quality = await validateEnrollmentPhotoQuality(photo.uri);
+          setPhotoQuality(quality);
+
+          if (!quality.isValid) {
+            ThemedAlert.alert(
+              'Photo Quality Warning',
+              `${quality.feedback}\n\nDo you want to retake or use anyway?`,
+              [
+                { text: 'Retake Photo', style: 'cancel' },
+                {
+                  text: 'Use Anyway',
+                  onPress: () => {
+                    setCapturedPhoto(photo.uri);
+                    setCameraVisible(false);
+                  },
+                },
+              ],
+              'warning'
+            );
+            return;
+          }
+
           setCapturedPhoto(photo.uri);
           setCameraVisible(false);
           return;
@@ -154,6 +179,8 @@ export default function EnrolmentScreen() {
               shutterSound: false,
             });
             if (retryPhoto && retryPhoto.uri) {
+              const retryQuality = await validateEnrollmentPhotoQuality(retryPhoto.uri);
+              setPhotoQuality(retryQuality);
               setCapturedPhoto(retryPhoto.uri);
               setCameraVisible(false);
               return;
@@ -233,7 +260,7 @@ export default function EnrolmentScreen() {
       }
     }
 
-    const joiningDateStr = formData.joiningDate.toISOString().split('T')[0];
+    const joiningDateStr = formatLocalDate(formData.joiningDate);
 
     if (editingId) {
       await updateEnrolledEmployee(editingId, {
@@ -894,9 +921,42 @@ export default function EnrolmentScreen() {
               </TouchableOpacity>
 
               {capturedPhoto && (
-                <View style={styles.successCaptureTag}>
-                  <MaterialCommunityIcons name="check-circle" size={16} color="#059669" style={{ marginRight: 6 }} />
-                  <Text style={styles.successCaptureText}>Face mapping successfully registered</Text>
+                <View style={{ marginTop: 10 }}>
+                  <View style={styles.successCaptureTag}>
+                    <MaterialCommunityIcons name="check-circle" size={16} color="#059669" style={{ marginRight: 6 }} />
+                    <Text style={styles.successCaptureText}>Face photo registered</Text>
+                  </View>
+                  {photoQuality && (
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        marginTop: 6,
+                        paddingHorizontal: 10,
+                        paddingVertical: 5,
+                        borderRadius: 8,
+                        backgroundColor: photoQuality.isValid ? '#ECFDF5' : '#FFFBEB',
+                        borderWidth: 1,
+                        borderColor: photoQuality.isValid ? '#A7F3D0' : '#FDE68A',
+                      }}
+                    >
+                      <MaterialCommunityIcons
+                        name={photoQuality.isValid ? 'shield-check' : 'alert-circle'}
+                        size={14}
+                        color={photoQuality.isValid ? '#059669' : '#D97706'}
+                        style={{ marginRight: 5 }}
+                      />
+                      <Text
+                        style={{
+                          fontSize: 11.5,
+                          fontWeight: '700',
+                          color: photoQuality.isValid ? '#065F46' : '#92400E',
+                        }}
+                      >
+                        Quality: {photoQuality.score}% · {photoQuality.feedback}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               )}
 

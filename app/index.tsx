@@ -20,8 +20,10 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
 import { useAuth } from '@/context/AuthContext';
-import { useAttendance } from '@/context/AttendanceContext';
+import { useAttendance, getShiftPunchWindow, ShiftEntry } from '@/context/AttendanceContext';
 import AuthPasswordModal from '@/components/AuthPasswordModal';
+import * as Speech from 'expo-speech';
+import { usePhoneClockSync, formatLocalDate } from '@/utils/clockSync';
 import { findBestMatch } from '@/utils/faceMatch';
 import { ThemedAlert } from '@/components/ThemedAlertProvider';
 import { getOrgPlatformAccountDb, deriveCompanyName } from '@/utils/database';
@@ -44,7 +46,12 @@ export default function AttendanceScreen() {
     enrolledEmployees,
     getActiveShift,
     aiSettings,
+    voiceFeedback,
+    groupScanMode,
+    saveGroupScanMode,
   } = useAttendance();
+
+  const { clockInfo } = usePhoneClockSync();
 
   const [orgAccount] = useState(() => getOrgPlatformAccountDb());
   const [isCameraReady, setIsCameraReady] = useState(false);
@@ -78,8 +85,9 @@ export default function AttendanceScreen() {
     }
   }, [isFocused]);
 
-  // Cooldown tracker per employee ID (timestamp of last punch)
-  const lastPunchMapRef = useRef<Record<string, number>>({});
+  // Tracks last recorded punch type per employee ID (in-memory, no restart persistence needed)
+  // Used to avoid duplicate scan of the same employee in a single auto-scan cycle
+  const lastPunchTimeRef = useRef<Record<string, number>>({});
 
   const [lastScanned, setLastScanned] = useState<{
     id: string;
@@ -91,6 +99,8 @@ export default function AttendanceScreen() {
     summary: string;
     photoUri?: string | null;
     confidence?: number;
+    status?: 'PRESENT' | 'LATE' | 'HALF_DAY' | 'ON_LEAVE';
+    isLate?: boolean;
   } | null>(null);
 
   const [permission, requestPermission] = useCameraPermissions();
@@ -278,11 +288,7 @@ export default function AttendanceScreen() {
         await delay(200);
 
         setScanPhase('matching');
-        setStatusMessage(
-          aiSettings.modelEngine === 'cloud'
-            ? 'Querying Cloud Face AI Engine...'
-            : 'Matching 128-d Biometric Vectors...'
-        );
+        setStatusMessage('Matching 128-d Biometric Vectors...');
         Animated.timing(progressAnim, {
           toValue: 0.7,
           duration: 400,
@@ -296,12 +302,7 @@ export default function AttendanceScreen() {
       const matchResult = await findBestMatch(liveShotUri, photoUris, {
         minConfidence: aiSettings.minConfidence,
         livenessMode: aiSettings.livenessMode,
-        modelEngine: aiSettings.modelEngine,
-        cloudConfig: {
-          url: aiSettings.cloudApiUrl,
-          apiKey: aiSettings.cloudApiKey,
-          apiSecret: aiSettings.cloudApiSecret,
-        },
+        modelEngine: 'local',
       });
 
       const { index, confidence, isCovered, livenessPassed, livenessReason } = matchResult;
@@ -356,23 +357,15 @@ export default function AttendanceScreen() {
       const matchedEmp = pool[index];
       const empId = matchedEmp.employeeId;
 
-      // Check Cooldown Window to prevent duplicate punches
+      // Debounce: prevent the same auto-scan triggering twice within 5 seconds
       const nowTs = Date.now();
-      const lastPunchTs = lastPunchMapRef.current[empId] || 0;
-      const cooldownMs = (aiSettings.scanCooldownSec || 30) * 1000;
-
-      if (nowTs - lastPunchTs < cooldownMs) {
-        if (!isAuto) {
-          setScanPhase('verified');
-          setStatusMessage(`${matchedEmp.name} scanned recently (Cooldown active)`);
-        }
+      const lastScanTs = lastPunchTimeRef.current[empId] || 0;
+      if (isAuto && nowTs - lastScanTs < 5000) {
         isScanningRef.current = false;
-        if (isAuto && isFocused && isCameraReady) scheduleNextAutoScan();
+        if (isFocused && isCameraReady) scheduleNextAutoScan();
         return;
       }
-
-      // Update cooldown tracker
-      lastPunchMapRef.current[empId] = nowTs;
+      lastPunchTimeRef.current[empId] = nowTs;
 
       setScanPhase('verified');
       setStatusMessage(`Verified: ${matchedEmp.name} (${confidence}% match)`);
@@ -385,6 +378,25 @@ export default function AttendanceScreen() {
       const existing = attendanceRecords.find((r) => r.employeeId === matchedEmp.employeeId);
       const count = (existing?.punches.length || 0) + (res.isNewPunch ? 1 : 0);
 
+      // Voice Feedback (TTS)
+      if (voiceFeedback) {
+        try {
+          Speech.stop();
+          const firstName = matchedEmp.name.split(' ')[0] || matchedEmp.name;
+          let spokenText = '';
+          if (!res.isNewPunch) {
+            spokenText = `Already clocked ${res.type === 'IN' ? 'in' : 'out'}, ${firstName}.`;
+          } else if (res.type === 'IN') {
+            spokenText = res.isLate
+              ? `Welcome ${firstName}. You are marked late.`
+              : `Welcome ${firstName}. Clock in recorded.`;
+          } else {
+            spokenText = `Goodbye ${firstName}. Clock out recorded.`;
+          }
+          Speech.speak(spokenText, { rate: 0.95, pitch: 1.0, language: 'en-US' });
+        } catch (_) {}
+      }
+
       setLastScanned({
         id: matchedEmp.employeeId,
         name: matchedEmp.name,
@@ -395,20 +407,24 @@ export default function AttendanceScreen() {
         summary: res.summary,
         photoUri: matchedEmp.photoUri,
         confidence,
+        status: res.status,
+        isLate: res.isLate,
       });
 
-      // Reset after showing verification card
+      // Reset after showing verification card (1000ms for Group Scan, 3500ms for Normal)
+      const holdDuration = groupScanMode ? 1000 : 3500;
       setTimeout(() => {
         setScanPhase('idle');
         setFaceConfidence(0);
+        setLastScanned(null);
         setStatusMessage(autoAttendance ? 'Waiting for face...' : 'Face scanner ready');
         isScanningRef.current = false;
         if (autoAttendance && isFocused && isCameraReady) {
           scheduleNextAutoScan();
         }
-      }, 3500);
+      }, holdDuration);
     },
-    [enrolledEmployees, attendanceRecords, autoAttendance, aiSettings, isFocused, isCameraReady]
+    [enrolledEmployees, attendanceRecords, autoAttendance, aiSettings, isFocused, isCameraReady, voiceFeedback, groupScanMode]
   );
 
   const runScanRef = useRef(runScan);
@@ -471,7 +487,7 @@ export default function AttendanceScreen() {
       : '#0284C7';
 
   const faceMappedCount = enrolledEmployees.filter((e) => e.photoUri).length;
-  const todayDate = new Date().toISOString().split('T')[0];
+  const todayDate = formatLocalDate(new Date());
   const todayPunches = attendanceRecords.filter((r) => r.date === todayDate);
 
   return (
@@ -481,10 +497,10 @@ export default function AttendanceScreen() {
       {/* ── Header ── */}
       <View style={styles.headerContainer}>
         <View style={styles.headerTopRow}>
-          <View>
+          <View style={{ flex: 1, minWidth: 0 }}>
             {orgAccount.isLoggedIn && Boolean(orgAccount.orgId) && (
               <View style={styles.companyBadgeRow}>
-                <FontAwesome name="building" size={11} color="#FF6900" style={{ marginRight: 4 }} />
+                <FontAwesome name="building" size={10} color="#FF6900" style={{ marginRight: 4 }} />
                 <Text style={styles.companyNameText} numberOfLines={1}>
                   {orgAccount.companyName || deriveCompanyName(orgAccount.orgEmail, orgAccount.orgId)}
                 </Text>
@@ -493,91 +509,110 @@ export default function AttendanceScreen() {
             <Text style={styles.headerTitle}>Visagel Attendance</Text>
             <View style={styles.headerUnderline} />
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <TouchableOpacity style={styles.adminButton} activeOpacity={0.8} onPress={handleAdminPress}>
-              <FontAwesome name="shield" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-              <Text style={styles.adminButtonText}>HR Login</Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity style={styles.adminButton} activeOpacity={0.8} onPress={handleAdminPress}>
+            <FontAwesome name="shield" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
+            <Text style={styles.adminButtonText}>HR Login</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* ── Info Bar ── */}
+
+        {/* ── Date + Clock Row ── */}
         <View style={styles.topInfoRow}>
           <View style={styles.dateBadgePill}>
             <MaterialCommunityIcons name="calendar-month-outline" size={12} color="#FF6900" style={{ marginRight: 4 }} />
             <Text style={styles.dateBadgeText}>{currentDateStr || 'Today'}</Text>
           </View>
           <View style={styles.clockPill}>
-            <MaterialCommunityIcons name="clock-outline" size={12} color="#0F172A" style={{ marginRight: 4 }} />
+            <MaterialCommunityIcons name="clock-outline" size={13} color="#FF6900" style={{ marginRight: 5 }} />
             <Text style={styles.clockText}>{currentTime || '--:--:-- AM'}</Text>
           </View>
         </View>
 
-        {/* ── Shift & Multi-Punch Status Banner ── */}
+        {/* ── Status Banner Card ── */}
         <View style={styles.statusBannerCard}>
-          {/* Shift Row */}
+          {/* Row 1: Shift + clock sync + punch type */}
           <View style={styles.statusRow}>
             <View style={styles.statusLeft}>
-              <MaterialCommunityIcons
-                name="clock-time-eight-outline"
-                size={14}
-                color={activeShift ? '#7C3AED' : '#94A3B8'}
-                style={{ marginRight: 6 }}
-              />
-              <Text style={[styles.shiftLabel, !activeShift && { color: '#94A3B8' }]}>{shiftLabel}</Text>
-            </View>
-            {activeShift && (
-              <View style={styles.shiftPunchTypePill}>
-                <Text style={styles.shiftPunchTypeText}>
-                  Next: {resolvePunchTypeLabel(activeShift)}
-                </Text>
+              <View style={[styles.statusIconDot, { backgroundColor: activeShift ? '#EDE9FE' : '#F1F5F9' }]}>
+                <MaterialCommunityIcons
+                  name="clock-time-eight-outline"
+                  size={13}
+                  color={activeShift ? '#7C3AED' : '#94A3B8'}
+                />
               </View>
-            )}
+              <Text style={[styles.shiftLabel, !activeShift && { color: '#94A3B8' }]} numberOfLines={1}>
+                {shiftLabel}
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              <View style={styles.clockSyncPill}>
+                <MaterialCommunityIcons name="sync" size={10} color="#059669" style={{ marginRight: 3 }} />
+                <Text style={styles.clockSyncText} numberOfLines={1}>{clockInfo.offsetStr}</Text>
+              </View>
+              {activeShift && (
+                <View style={styles.shiftPunchTypePill}>
+                  <Text style={styles.shiftPunchTypeText}>{resolvePunchTypeLabel(activeShift)}</Text>
+                </View>
+              )}
+            </View>
           </View>
 
           <View style={styles.bannerDivider} />
 
-          {/* Multi-Punch & Auto Mode Indicators */}
+          {/* Row 2: Multi-punch badge · Group scan · Auto toggle */}
           <View style={styles.featuresRow}>
             <View style={styles.featureBadge}>
               <MaterialCommunityIcons
                 name={multipleTimeEntries ? 'repeat' : 'numeric-1-circle'}
-                size={14}
+                size={13}
                 color={multipleTimeEntries ? '#2563EB' : '#64748B'}
                 style={{ marginRight: 4 }}
               />
               <Text style={[styles.featureText, { color: multipleTimeEntries ? '#1E40AF' : '#475569' }]}>
-                {multipleTimeEntries ? 'Multi-Punch: ON' : 'Single Punch: ON'}
+                {multipleTimeEntries ? 'Multi-Punch' : 'Single'}
               </Text>
             </View>
+
+            <TouchableOpacity
+              style={[styles.groupScanTogglePill, groupScanMode && styles.groupScanTogglePillActive]}
+              onPress={() => saveGroupScanMode(!groupScanMode)}
+              activeOpacity={0.7}
+            >
+              <MaterialCommunityIcons
+                name="account-group"
+                size={13}
+                color={groupScanMode ? '#FFFFFF' : '#64748B'}
+                style={{ marginRight: 3 }}
+              />
+              <Text style={[styles.groupScanToggleText, groupScanMode && { color: '#FFFFFF' }]}>
+                Group {groupScanMode ? 'ON' : 'OFF'}
+              </Text>
+            </TouchableOpacity>
 
             <View style={styles.autoToggleContainer}>
               <Animated.View
                 style={[
                   styles.autoPulseDot,
                   {
-                    backgroundColor: autoAttendance ? '#10B981' : '#94A3B8',
+                    backgroundColor: autoAttendance ? '#10B981' : '#CBD5E1',
                     transform: [{ scale: autoAttendance ? pulseAnim : 1 }],
                   },
                 ]}
               />
-              <Text style={styles.autoToggleLabel}>
-                {autoAttendance ? 'Auto Attendance ON' : 'Manual Scan Mode'}
-              </Text>
               <Switch
                 value={autoAttendance}
                 onValueChange={setAutoAttendance}
                 trackColor={{ false: '#E2E8F0', true: '#10B981' }}
                 thumbColor="#FFFFFF"
-                style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
+                style={{ transform: [{ scaleX: 0.78 }, { scaleY: 0.78 }] }}
               />
             </View>
           </View>
         </View>
 
-        {/* ── Camera Viewfinder Card ── */}
+        {/* ── Camera Viewfinder ── */}
         <View style={styles.cameraCard}>
           <View style={styles.cameraWrapper}>
             {!permission?.granted ? (
@@ -585,7 +620,7 @@ export default function AttendanceScreen() {
                 <MaterialCommunityIcons name="camera-off" size={40} color="#EF4444" style={{ marginBottom: 8 }} />
                 <Text style={styles.permissionTitle}>Camera Access Required</Text>
                 <Text style={styles.permissionSubtitle}>
-                  Please grant camera permissions to enable face recognition & attendance marking.
+                  Grant camera permissions to enable face recognition & attendance marking.
                 </Text>
                 <TouchableOpacity style={styles.grantBtn} onPress={requestPermission}>
                   <Text style={styles.grantBtnText}>Grant Camera Permission</Text>
@@ -611,14 +646,13 @@ export default function AttendanceScreen() {
                   }}
                 />
 
-                {/* HUD Corners & Target Box */}
+                {/* HUD Target Box */}
                 <View style={styles.targetHudContainer} pointerEvents="none">
                   <View style={[styles.hudCorner, styles.hudTL, { borderColor: hudColor }]} />
                   <View style={[styles.hudCorner, styles.hudTR, { borderColor: hudColor }]} />
                   <View style={[styles.hudCorner, styles.hudBL, { borderColor: hudColor }]} />
                   <View style={[styles.hudCorner, styles.hudBR, { borderColor: hudColor }]} />
 
-                  {/* Biometric Laser Scanning Line */}
                   {(['detecting', 'aligning', 'matching'].includes(scanPhase) || (autoAttendance && scanPhase === 'idle')) && (
                     <Animated.View
                       style={[
@@ -629,7 +663,7 @@ export default function AttendanceScreen() {
                             {
                               translateY: laserAnim.interpolate({
                                 inputRange: [0, 1],
-                                outputRange: [-90, 90],
+                                outputRange: [-100, 100],
                               }),
                             },
                           ],
@@ -639,7 +673,7 @@ export default function AttendanceScreen() {
                   )}
                 </View>
 
-                {/* Progress bar during active matching */}
+                {/* Progress bar */}
                 {scanPhase === 'matching' && (
                   <View style={styles.progressBarWrap} pointerEvents="none">
                     <Animated.View
@@ -657,7 +691,7 @@ export default function AttendanceScreen() {
                   </View>
                 )}
 
-                {/* Auto scan radar indicator badge */}
+                {/* Auto scan badge - top left */}
                 {autoAttendance && scanPhase === 'idle' && (
                   <View style={styles.autoScanBadge} pointerEvents="none">
                     <View style={styles.radarRing} />
@@ -665,25 +699,32 @@ export default function AttendanceScreen() {
                   </View>
                 )}
 
-                {/* Camera Status Strip */}
+                {/* Confidence badge - top right */}
+                {faceConfidence > 0 && (
+                  <View style={styles.confidenceBadge} pointerEvents="none">
+                    <Text style={styles.confidenceBadgeText}>{faceConfidence}%</Text>
+                  </View>
+                )}
+
+                {/* Status overlay - bottom strip */}
                 <View
                   style={[
                     styles.cameraOverlayFrame,
                     {
                       backgroundColor:
                         scanPhase === 'failed'
-                          ? 'rgba(239,68,68,0.92)'
+                          ? 'rgba(239,68,68,0.93)'
                           : scanPhase === 'verified'
-                          ? 'rgba(16,185,129,0.94)'
+                          ? 'rgba(16,185,129,0.93)'
                           : scanPhase !== 'idle'
                           ? `${hudColor}E6`
-                          : 'rgba(10,25,47,0.75)',
+                          : 'rgba(10,25,47,0.80)',
                     },
                   ]}
                   pointerEvents="none"
                 >
                   {['detecting', 'aligning', 'matching'].includes(scanPhase) ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
                   ) : (
                     <MaterialCommunityIcons
                       name={
@@ -695,9 +736,9 @@ export default function AttendanceScreen() {
                           ? 'face-recognition'
                           : 'camera-iris'
                       }
-                      size={14}
+                      size={15}
                       color="#FFFFFF"
-                      style={{ marginRight: 6 }}
+                      style={{ marginRight: 8 }}
                     />
                   )}
                   <Text style={styles.scannerActiveText} numberOfLines={1}>
@@ -709,7 +750,7 @@ export default function AttendanceScreen() {
           </View>
         </View>
 
-        {/* ── Manual Scan Button (Fast Trigger) ── */}
+        {/* ── Scan Button ── */}
         <TouchableOpacity
           style={[styles.primaryScanBtn, scanPhase !== 'idle' && styles.primaryScanBtnDisabled]}
           activeOpacity={0.85}
@@ -718,12 +759,12 @@ export default function AttendanceScreen() {
         >
           {scanPhase !== 'idle' ? (
             <>
-              <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+              <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 10 }} />
               <Text style={styles.primaryScanBtnText}>Processing Face...</Text>
             </>
           ) : (
             <>
-              <MaterialCommunityIcons name="face-recognition" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+              <MaterialCommunityIcons name="face-recognition" size={22} color="#FFFFFF" style={{ marginRight: 10 }} />
               <Text style={styles.primaryScanBtnText}>
                 {autoAttendance ? 'Scan Face Instantly' : 'Scan & Mark Attendance'}
               </Text>
@@ -731,65 +772,96 @@ export default function AttendanceScreen() {
           )}
         </TouchableOpacity>
 
-        {/* ── Warning if no photos mapped ── */}
+        {/* ── Auto mode label ── */}
+        <View style={styles.autoModeLabel}>
+          <Animated.View
+            style={[
+              styles.autoPulseDotLarge,
+              {
+                backgroundColor: autoAttendance ? '#10B981' : '#CBD5E1',
+                transform: [{ scale: autoAttendance ? pulseAnim : 1 }],
+              },
+            ]}
+          />
+          <Text style={styles.autoModeLabelText}>
+            {autoAttendance ? 'Auto Attendance ON — Scanning every 3s' : 'Manual Mode — Tap button to scan'}
+          </Text>
+        </View>
+
+        {/* ── No face enrolled warning ── */}
         {faceMappedCount === 0 && (
           <TouchableOpacity onPress={handleAdminPress} style={styles.noFaceHint}>
             <MaterialCommunityIcons name="alert-circle-outline" size={16} color="#C2410C" style={{ marginRight: 8 }} />
             <Text style={styles.noFaceHintText}>
-              No employee faces enrolled yet. Tap here to login as HR and enroll employee photos.
+              No employee faces enrolled yet. Tap here to login as HR and enroll photos.
             </Text>
           </TouchableOpacity>
         )}
 
-        {/* ── Verified Punch Card ── */}
+        {/* ── Verified Punch Result Card ── */}
         {lastScanned ? (
           <View style={styles.resultCard}>
+            {/* Avatar */}
             <View style={styles.resultAvatarCircle}>
               {lastScanned.photoUri ? (
                 <Image source={{ uri: lastScanned.photoUri }} style={styles.resultAvatarImage} />
               ) : (
-                <FontAwesome name="user" size={20} color="#FF6900" />
+                <FontAwesome name="user" size={24} color="#FF6900" />
               )}
+              {/* Verified check overlay */}
+              <View style={styles.resultAvatarCheck}>
+                <MaterialCommunityIcons name="check-circle" size={16} color="#10B981" />
+              </View>
             </View>
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.resultName} numberOfLines={1}>
-                    {lastScanned.name}
-                  </Text>
-                  <Text style={styles.resultDeptText} numberOfLines={1}>
-                    {lastScanned.id} · {lastScanned.department}
-                  </Text>
-                </View>
-                <View
-                  style={[
-                    styles.resultTypePill,
-                    {
-                      backgroundColor: lastScanned.type === 'Time In' ? '#ECFDF5' : '#FFF7ED',
-                      borderColor: lastScanned.type === 'Time In' ? '#A7F3D0' : '#FED7AA',
-                    },
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    name={lastScanned.type === 'Time In' ? 'login' : 'logout'}
-                    size={11}
-                    color={lastScanned.type === 'Time In' ? '#059669' : '#C2410C'}
-                    style={{ marginRight: 3 }}
-                  />
-                  <Text
+
+            {/* Info */}
+            <View style={{ flex: 1, minWidth: 0 }}>
+              {/* Name row */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                <Text style={styles.resultName} numberOfLines={1}>{lastScanned.name}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 0, marginLeft: 8 }}>
+                  {lastScanned.isLate && (
+                    <View style={styles.latePill}>
+                      <MaterialCommunityIcons name="clock-alert-outline" size={10} color="#DC2626" style={{ marginRight: 2 }} />
+                      <Text style={styles.latePillText}>LATE</Text>
+                    </View>
+                  )}
+                  <View
                     style={[
-                      styles.resultTypeText,
-                      { color: lastScanned.type === 'Time In' ? '#059669' : '#C2410C' },
+                      styles.resultTypePill,
+                      {
+                        backgroundColor: lastScanned.type === 'Time In' ? '#ECFDF5' : '#FFF7ED',
+                        borderColor: lastScanned.type === 'Time In' ? '#A7F3D0' : '#FED7AA',
+                      },
                     ]}
                   >
-                    {lastScanned.type}
-                  </Text>
+                    <MaterialCommunityIcons
+                      name={lastScanned.type === 'Time In' ? 'login' : 'logout'}
+                      size={11}
+                      color={lastScanned.type === 'Time In' ? '#059669' : '#C2410C'}
+                      style={{ marginRight: 3 }}
+                    />
+                    <Text style={[styles.resultTypeText, { color: lastScanned.type === 'Time In' ? '#059669' : '#C2410C' }]}>
+                      {lastScanned.type}
+                    </Text>
+                  </View>
                 </View>
               </View>
+
+              {/* Department + ID */}
+              <Text style={styles.resultDeptText} numberOfLines={1}>
+                {lastScanned.id} · {lastScanned.department}
+              </Text>
+
+              {/* Time */}
               <Text style={styles.resultTime}>{lastScanned.time}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 6, flexWrap: 'wrap' }}>
-                <MaterialCommunityIcons name="check-decagram" size={12} color="#10B981" style={{ marginRight: 2 }} />
-                <Text style={styles.resultVerified}>Match {lastScanned.confidence}%</Text>
+
+              {/* Confidence + punch count */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 6, flexWrap: 'wrap' }}>
+                <View style={styles.confPill}>
+                  <MaterialCommunityIcons name="check-decagram" size={11} color="#059669" style={{ marginRight: 3 }} />
+                  <Text style={styles.confPillText}>Match {lastScanned.confidence}%</Text>
+                </View>
                 {multipleTimeEntries && (
                   <View style={styles.punchCountPill}>
                     <Text style={styles.punchCountPillText}>Punch #{lastScanned.punchCount || 1}</Text>
@@ -799,16 +871,22 @@ export default function AttendanceScreen() {
             </View>
           </View>
         ) : (
+          /* ── Idle Hint Card ── */
           <View style={styles.idleResultCard}>
-            <MaterialCommunityIcons name="shield-check-outline" size={20} color="#64748B" style={{ marginRight: 10 }} />
+            <View style={styles.idleIconBox}>
+              <MaterialCommunityIcons
+                name={autoAttendance ? 'face-recognition' : 'hand-pointing-up'}
+                size={22}
+                color={autoAttendance ? '#10B981' : '#FF6900'}
+              />
+            </View>
             <Text style={styles.idleResultText}>
               {autoAttendance
-                ? 'Auto Attendance Active: Stand in front of camera to mark attendance automatically.'
-                : 'Manual Mode: Position your face inside the frame and tap the scan button.'}
+                ? 'Auto Attendance Active — Stand in front of the camera to mark attendance automatically.'
+                : 'Manual Mode — Position your face inside the frame and tap the scan button.'}
             </Text>
           </View>
         )}
-
 
       </ScrollView>
 
@@ -829,15 +907,10 @@ export default function AttendanceScreen() {
 const delay = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
 const pad = (n: number) => String(n).padStart(2, '0');
 
-function resolvePunchTypeLabel(shift: { startHour: number; startMin: number; endHour: number; endMin: number }) {
-  const now = new Date();
-  const nowMins = now.getHours() * 60 + now.getMinutes();
-  const startMins = shift.startHour * 60 + shift.startMin;
-  let endMins = shift.endHour * 60 + shift.endMin;
-  if (endMins <= startMins) endMins += 24 * 60;
-  let relNow = nowMins < startMins ? nowMins + 24 * 60 : nowMins;
-  const half = (endMins - startMins) / 2;
-  return relNow - startMins < half ? 'Time In' : 'Time Out';
+function resolvePunchTypeLabel(shift: ShiftEntry | null) {
+  if (!shift) return 'Time In';
+  const win = getShiftPunchWindow(shift, new Date());
+  return win === 'IN' ? 'Time In' : 'Time Out';
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -909,6 +982,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   statusLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 },
+  statusIconDot: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
   shiftLabel: { fontSize: 12, fontWeight: '700', color: '#7C3AED' },
   shiftPunchTypePill: {
     backgroundColor: '#7C3AED',
@@ -917,6 +998,36 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   shiftPunchTypeText: { fontSize: 10, fontWeight: '800', color: '#FFFFFF' },
+  clockSyncPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  clockSyncText: { fontSize: 10, fontWeight: '700', color: '#059669' },
+  groupScanTogglePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  groupScanTogglePillActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#1D4ED8',
+  },
+  groupScanToggleText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#475569',
+  },
   bannerDivider: { height: 1, backgroundColor: '#F1F5F9', marginVertical: 10 },
   featuresRow: {
     flexDirection: 'row',
@@ -1054,6 +1165,20 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   autoScanBadgeText: { fontSize: 10.5, color: '#FFFFFF', fontWeight: '800' },
+  confidenceBadge: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    backgroundColor: 'rgba(16, 185, 129, 0.9)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  confidenceBadgeText: {
+    fontSize: 10.5,
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
   cameraOverlayFrame: {
     position: 'absolute',
     bottom: 0,
@@ -1082,6 +1207,23 @@ const styles = StyleSheet.create({
   },
   primaryScanBtnDisabled: { backgroundColor: '#94A3B8', shadowOpacity: 0, elevation: 0 },
   primaryScanBtnText: { fontSize: 15, fontWeight: '800', color: '#FFFFFF', letterSpacing: 0.3 },
+  autoModeLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  autoPulseDotLarge: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  autoModeLabelText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#64748B',
+  },
   noFaceHint: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1122,8 +1264,26 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   resultAvatarImage: { width: '100%', height: '100%', borderRadius: 24, resizeMode: 'cover' },
+  resultAvatarCheck: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+  },
   resultName: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
   resultDeptText: { fontSize: 12, color: '#64748B', fontWeight: '500', marginTop: 1 },
+  latePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  latePillText: { fontSize: 10.5, fontWeight: '800', color: '#DC2626' },
   resultTypePill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1144,6 +1304,21 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   punchCountPillText: { fontSize: 10.5, fontWeight: '700', color: '#C2410C' },
+  confPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  confPillText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#059669',
+  },
   idleResultCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1153,6 +1328,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
     marginBottom: 12,
+  },
+  idleIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#FFF7ED',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
   },
   idleResultText: { flex: 1, fontSize: 12, color: '#64748B', fontWeight: '500', lineHeight: 18 },
   logSectionHeader: { marginTop: 4, marginBottom: 8 },

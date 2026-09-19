@@ -150,6 +150,15 @@ export default function RootLayout() {
               }}
             />
             <Tabs.Screen
+              name="screens/analytics"
+              options={{
+                title: "Analytics",
+                tabBarIcon: ({ color, size }) => (
+                  <FontAwesome name="line-chart" size={size} color={color} />
+                ),
+              }}
+            />
+            <Tabs.Screen
               name="screens/settings"
               options={{
                 title: "Settings",
