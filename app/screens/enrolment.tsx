@@ -26,6 +26,7 @@ import AppDateTimePicker from '@/components/AppDateTimePicker';
 import { ThemedAlert } from '@/components/ThemedAlertProvider';
 import { getOrgPlatformAccountDb, deriveCompanyName } from '@/utils/database';
 import { validateEnrollmentPhotoQuality, PhotoQualityResult } from '@/utils/faceMatch';
+import { extractFaceVector } from '@/utils/faceEngine';
 import { formatLocalDate } from '@/utils/clockSync';
 
 const THEME_COLOR = '#FF6900';
@@ -261,6 +262,10 @@ export default function EnrolmentScreen() {
     }
 
     const joiningDateStr = formatLocalDate(formData.joiningDate);
+    let embeddingVector: number[] | undefined;
+    if (capturedPhoto) {
+      embeddingVector = await extractFaceVector(capturedPhoto);
+    }
 
     if (editingId) {
       await updateEnrolledEmployee(editingId, {
@@ -269,6 +274,8 @@ export default function EnrolmentScreen() {
         phone: formData.phone,
         joiningDate: joiningDateStr,
         photoUri: capturedPhoto,
+        embedding: embeddingVector,
+        modelVersion: 'mobilefacenet-v2',
       });
       ThemedAlert.alert('Success', `Successfully updated ${formData.name}!`, [{ text: 'Done' }], 'success');
     } else {
@@ -279,6 +286,8 @@ export default function EnrolmentScreen() {
         phone: formData.phone,
         joiningDate: joiningDateStr,
         photoUri: capturedPhoto,
+        embedding: embeddingVector,
+        modelVersion: 'mobilefacenet-v2',
       });
       ThemedAlert.alert('Success', `Successfully enrolled ${formData.name} (${formData.employeeId.trim()})!`, [{ text: 'Done' }], 'success');
     }

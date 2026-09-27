@@ -22,9 +22,11 @@ import { useIsFocused } from '@react-navigation/native';
 import { useAuth } from '@/context/AuthContext';
 import { useAttendance, getShiftPunchWindow, ShiftEntry } from '@/context/AttendanceContext';
 import AuthPasswordModal from '@/components/AuthPasswordModal';
+// @ts-ignore
 import * as Speech from 'expo-speech';
 import { usePhoneClockSync, formatLocalDate } from '@/utils/clockSync';
-import { findBestMatch } from '@/utils/faceMatch';
+import { findBestMatchInFrame, DetectedFace, PrimaryFaceScore } from '@/utils/faceMatch';
+import { FaceTracker, TemporalConfirmationBuffer } from '@/utils/faceEngine';
 import { ThemedAlert } from '@/components/ThemedAlertProvider';
 import { getOrgPlatformAccountDb, deriveCompanyName } from '@/utils/database';
 
@@ -61,6 +63,21 @@ export default function AttendanceScreen() {
   const [scanPhase, setScanPhase] = useState<ScanPhase>('idle');
   const [statusMessage, setStatusMessage] = useState('Waiting for face...');
   const [faceConfidence, setFaceConfidence] = useState(0);
+
+  // Multi-Face Detection & Telemetry State
+  const [detectedFaces, setDetectedFaces] = useState<DetectedFace[]>([]);
+  const [primaryFace, setPrimaryFace] = useState<DetectedFace | null>(null);
+  const [primaryScoreInfo, setPrimaryScoreInfo] = useState<PrimaryFaceScore | null>(null);
+  const [debugTelemetry, setDebugTelemetry] = useState({
+    latencyMs: 0,
+    faceCount: 0,
+    targetTrackId: null as string | null,
+    livenessScore: 0,
+    temporalStatus: 'WAITING',
+  });
+
+  const faceTrackerRef = useRef(new FaceTracker());
+  const temporalBufferRef = useRef(new TemporalConfirmationBuffer(aiSettings.requiredTemporalFrames || 3));
 
   // Auto-attendance toggle
   const [autoAttendance, setAutoAttendance] = useState(true);
@@ -297,15 +314,47 @@ export default function AttendanceScreen() {
         }).start();
       }
 
-      // Match face against enrolled pool using Industry-Standard Face Engine
+      // Match face against enrolled pool using On-Device Mobile Face Pipeline
+      const tStart = Date.now();
       const photoUris = pool.map((e) => e.photoUri as string);
-      const matchResult = await findBestMatch(liveShotUri, photoUris, {
+      const matchResult = await findBestMatchInFrame(liveShotUri, photoUris, {
         minConfidence: aiSettings.minConfidence,
         livenessMode: aiSettings.livenessMode,
         modelEngine: 'local',
+        trackedTargetId: faceTrackerRef.current.getActiveTrackId(),
+        scoreWeights: aiSettings.scoreWeights,
       });
 
-      const { index, confidence, isCovered, livenessPassed, livenessReason } = matchResult;
+      const latency = Date.now() - tStart;
+      const {
+        index,
+        confidence,
+        isCovered,
+        livenessPassed,
+        livenessReason,
+        allFaces,
+        primaryFace: selFace,
+        primaryScore: selScore,
+        statusReason,
+      } = matchResult;
+
+      setDetectedFaces(allFaces || []);
+      setPrimaryFace(selFace || null);
+      setPrimaryScoreInfo(selScore || null);
+
+      faceTrackerRef.current.updateTrack(allFaces || []);
+      const activeTrackId = faceTrackerRef.current.getActiveTrackId();
+
+      const candidateId = (index !== -1 && confidence >= aiSettings.minConfidence) ? pool[index].employeeId : null;
+      const tempCheck = temporalBufferRef.current.addFrameResult(candidateId);
+
+      setDebugTelemetry({
+        latencyMs: latency,
+        faceCount: (allFaces || []).length,
+        targetTrackId: activeTrackId,
+        livenessScore: matchResult.livenessScore,
+        temporalStatus: tempCheck.isStable ? 'STABLE' : 'BUFFERING',
+      });
 
       if (!isAuto) {
         Animated.timing(progressAnim, {
@@ -321,7 +370,7 @@ export default function AttendanceScreen() {
       if (index === -1 || confidence < aiSettings.minConfidence || isCovered || !livenessPassed) {
         if (!isAuto) {
           setScanPhase('failed');
-          let failMsg = `No face match (${confidence}%) — Try again`;
+          let failMsg = statusReason || `No face match (${confidence}%) — Try again`;
           if (isCovered) failMsg = 'Camera covered or too dark';
           else if (!livenessPassed) failMsg = livenessReason || 'Liveness check failed (Spoof risk)';
 
@@ -342,6 +391,8 @@ export default function AttendanceScreen() {
             setStatusMessage('Waiting for face...');
           } else if (!livenessPassed) {
             setStatusMessage('Position face in frame...');
+          } else if (allFaces && allFaces.length > 1) {
+            setStatusMessage(`Primary target selected (${allFaces.length} faces)...`);
           } else if (index === -1) {
             setStatusMessage('Scanning face...');
           }
@@ -645,6 +696,50 @@ export default function AttendanceScreen() {
                     setIsCameraReady(false);
                   }}
                 />
+
+                {/* Dynamic Multi-Face Bounding Boxes */}
+                {detectedFaces.map((f, idx) => {
+                  const isPrimary = f.id === primaryFace?.id;
+                  return (
+                    <View
+                      key={f.id || `face-${idx}`}
+                      style={[
+                        styles.faceBoundingBox,
+                        {
+                          left: `${f.boundingBox.x * 100}%`,
+                          top: `${f.boundingBox.y * 100}%`,
+                          width: `${f.boundingBox.width * 100}%`,
+                          height: `${f.boundingBox.height * 100}%`,
+                          borderColor: isPrimary ? '#10B981' : '#F59E0B',
+                          borderWidth: isPrimary ? 2 : 1.5,
+                        },
+                      ]}
+                      pointerEvents="none"
+                    >
+                      <View
+                        style={[
+                          styles.faceBoxTag,
+                          { backgroundColor: isPrimary ? 'rgba(16,185,129,0.90)' : 'rgba(245,158,11,0.90)' },
+                        ]}
+                      >
+                        <Text style={styles.faceBoxTagText}>
+                          {isPrimary
+                            ? `PRIMARY TARGET ${primaryScoreInfo ? `(${Math.round(primaryScoreInfo.totalScore * 100)}%)` : ''}`
+                            : `BACKGROUND SUBJECT #${idx + 1}`}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
+
+                {/* Debug Telemetry Bar */}
+                {Boolean(aiSettings.debugOverlayEnabled) && (
+                  <View style={styles.debugHudContainer} pointerEvents="none">
+                    <Text style={styles.debugHudText}>
+                      ⚡ {debugTelemetry.latencyMs}ms | Faces: {debugTelemetry.faceCount} | Track: {debugTelemetry.targetTrackId || 'NONE'} | Live: {debugTelemetry.livenessScore}% | Buffer: {debugTelemetry.temporalStatus}
+                    </Text>
+                  </View>
+                )}
 
                 {/* HUD Target Box */}
                 <View style={styles.targetHudContainer} pointerEvents="none">
@@ -1381,4 +1476,44 @@ const styles = StyleSheet.create({
   },
   logTypeText: { fontSize: 10.5, fontWeight: '700' },
   logTimeText: { fontSize: 11, color: '#64748B', fontWeight: '600' },
+  faceBoundingBox: {
+    position: 'absolute',
+    borderRadius: 8,
+    borderStyle: 'solid',
+    zIndex: 10,
+  },
+  faceBoxTag: {
+    position: 'absolute',
+    top: -18,
+    left: 0,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  faceBoxTagText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  debugHudContainer: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    right: 6,
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    zIndex: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  debugHudText: {
+    color: '#38BDF8',
+    fontSize: 10,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+    textAlign: 'center',
+  },
 });

@@ -16,6 +16,16 @@ export interface AiModelSettings {
   cloudApiUrl: string;
   cloudApiKey: string;
   cloudApiSecret: string;
+  modelVersion?: string;
+  requiredTemporalFrames?: number;
+  debugOverlayEnabled?: boolean;
+  scoreWeights?: {
+    sizeWeight: number;
+    centerWeight: number;
+    confidenceWeight: number;
+    qualityWeight: number;
+    trackingWeight: number;
+  };
 }
 
 export interface EnrolledEmployee {
@@ -27,6 +37,8 @@ export interface EnrolledEmployee {
   joiningDate: string;
   photoUri: string | null;
   customData?: Record<string, string>;
+  embedding?: number[];
+  modelVersion?: string;
 }
 
 export interface PunchRecord {
@@ -74,10 +86,20 @@ export interface ShiftEntry {
 export const DEFAULT_AI_SETTINGS: AiModelSettings = {
   modelEngine: 'local',
   livenessMode: 'balanced',
-  minConfidence: 75,
+  minConfidence: 70,
   cloudApiUrl: 'https://api-us.faceplusplus.com/facepp/v3/compare',
   cloudApiKey: '',
   cloudApiSecret: '',
+  modelVersion: 'mobilefacenet-v2',
+  requiredTemporalFrames: 3,
+  debugOverlayEnabled: false,
+  scoreWeights: {
+    sizeWeight: 0.35,
+    centerWeight: 0.30,
+    confidenceWeight: 0.15,
+    qualityWeight: 0.10,
+    trackingWeight: 0.10,
+  },
 };
 
 export const DEFAULT_DEPARTMENTS: string[] = [
