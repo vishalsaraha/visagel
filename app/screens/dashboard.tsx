@@ -522,13 +522,23 @@ export default function DashboardScreen() {
               <View style={styles.filterCardHeader}>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <MaterialCommunityIcons name="tune-variant" size={13} color={THEME_COLOR} style={{ marginRight: 4 }} />
-                  <Text style={styles.filterCardHeading}>ADVANCED FILTERS</Text>
+                  <Text style={styles.filterCardHeading}>FILTERS & SORT</Text>
                 </View>
-                {hasActiveFilters && (
-                  <TouchableOpacity onPress={resetFilters} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <Text style={styles.filterResetLink}>Reset Filters</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  {hasActiveFilters && (
+                    <TouchableOpacity onPress={resetFilters} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <Text style={styles.filterResetLink}>Reset</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    onPress={() => setIsFilterExpanded(false)}
+                    style={styles.filterDoneBtn}
+                    activeOpacity={0.8}
+                  >
+                    <FontAwesome name="check" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <Text style={styles.filterDoneBtnText}>Done</Text>
                   </TouchableOpacity>
-                )}
+                </View>
               </View>
 
               {/* Department pills */}
@@ -559,23 +569,37 @@ export default function DashboardScreen() {
               {/* Status Filter Pills */}
               <Text style={[styles.filterSectionLabel, { marginTop: 10 }]}>ATTENDANCE STATUS</Text>
               <View style={styles.pillsWrapRow}>
-                {(['All', 'Present', 'Late', 'Half Day', 'On Leave'] as const).map((st) => (
+                {(
+                  [
+                    { id: 'All', label: 'All', dot: null },
+                    { id: 'Present', label: 'Present', dot: '#10B981' },
+                    { id: 'Late', label: 'Late', dot: '#F59E0B' },
+                    { id: 'Half Day', label: 'Half Day', dot: '#8B5CF6' },
+                    { id: 'On Leave', label: 'On Leave', dot: '#3B82F6' },
+                  ] as const
+                ).map((st) => (
                   <TouchableOpacity
-                    key={st}
+                    key={st.id}
                     style={[
                       styles.compactPill,
-                      selectedStatus === st ? styles.compactPillActive : styles.compactPillInactive,
+                      selectedStatus === st.id ? styles.compactPillActive : styles.compactPillInactive,
                     ]}
-                    onPress={() => setSelectedStatus(st)}
+                    onPress={() => setSelectedStatus(st.id)}
                     activeOpacity={0.75}
                   >
+                    {st.dot && (
+                      <View style={[
+                        styles.statusDot,
+                        { backgroundColor: selectedStatus === st.id ? 'rgba(255,255,255,0.7)' : st.dot }
+                      ]} />
+                    )}
                     <Text
                       style={[
                         styles.compactPillText,
-                        selectedStatus === st ? styles.compactPillTextActive : styles.compactPillTextInactive,
+                        selectedStatus === st.id ? styles.compactPillTextActive : styles.compactPillTextInactive,
                       ]}
                     >
-                      {st === 'All' ? 'All Status' : st}
+                      {st.label}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -611,9 +635,9 @@ export default function DashboardScreen() {
               <View style={styles.pillsWrapRow}>
                 {(
                   [
-                    { id: 'name', label: 'Name (A-Z)' },
-                    { id: 'time', label: 'Recent Punch' },
-                    { id: 'punches', label: 'Punch Count' },
+                    { id: 'name', label: 'Name (A-Z)', icon: 'sort-alphabetical-ascending' },
+                    { id: 'time', label: 'Recent Punch', icon: 'clock-fast' },
+                    { id: 'punches', label: 'Punch Count', icon: 'gesture-tap' },
                   ] as const
                 ).map((s) => (
                   <TouchableOpacity
@@ -625,6 +649,12 @@ export default function DashboardScreen() {
                     onPress={() => setSortBy(s.id)}
                     activeOpacity={0.75}
                   >
+                    <MaterialCommunityIcons
+                      name={s.icon}
+                      size={11}
+                      color={sortBy === s.id ? '#FFFFFF' : '#64748B'}
+                      style={{ marginRight: 4 }}
+                    />
                     <Text
                       style={[
                         styles.compactPillText,
@@ -639,6 +669,7 @@ export default function DashboardScreen() {
             </View>
           )}
         </View>
+
 
         {/* Daily Attendance Report Section */}
         <View style={styles.reportSectionHeader}>
@@ -1801,6 +1832,25 @@ const styles = StyleSheet.create({
   },
   compactPillTextInactive: {
     color: '#475569',
+  },
+  filterDoneBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FF6900',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+  },
+  filterDoneBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    marginRight: 4,
   },
   deletePunchBtn: {
     width: 28,

@@ -84,6 +84,7 @@ export default function AttendanceScreen() {
 
   const cameraReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isCapturingPhotoRef = useRef(false);
+  const verificationResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Stop scanning and clear timer when screen loses focus
   useEffect(() => {
@@ -99,7 +100,17 @@ export default function AttendanceScreen() {
         clearTimeout(autoScanTimerRef.current);
         autoScanTimerRef.current = null;
       }
+      if (verificationResetTimeoutRef.current) {
+        clearTimeout(verificationResetTimeoutRef.current);
+        verificationResetTimeoutRef.current = null;
+      }
     }
+    return () => {
+      if (verificationResetTimeoutRef.current) {
+        clearTimeout(verificationResetTimeoutRef.current);
+        verificationResetTimeoutRef.current = null;
+      }
+    };
   }, [isFocused]);
 
   // Tracks last recorded punch type per employee ID (in-memory, no restart persistence needed)
@@ -338,11 +349,40 @@ export default function AttendanceScreen() {
         statusReason,
       } = matchResult;
 
-      setDetectedFaces(allFaces || []);
+      // ── BLANK SLATE RULE: An empty camera means an empty memory ──────────────
+      if (!allFaces || allFaces.length === 0) {
+        if (verificationResetTimeoutRef.current) {
+          clearTimeout(verificationResetTimeoutRef.current);
+          verificationResetTimeoutRef.current = null;
+        }
+        setDetectedFaces([]);
+        setPrimaryFace(null);
+        setPrimaryScoreInfo(null);
+        setFaceConfidence(0);
+        setLastScanned(null);
+        setScanPhase('idle');
+        setStatusMessage(autoAttendance ? 'Waiting for face...' : 'Face scanner ready');
+        faceTrackerRef.current.reset();
+        temporalBufferRef.current.reset();
+        setDebugTelemetry({
+          latencyMs: latency,
+          faceCount: 0,
+          targetTrackId: null,
+          livenessScore: 0,
+          temporalStatus: 'WAITING',
+        });
+        isScanningRef.current = false;
+        if (autoAttendance && isFocused && isCameraReady) {
+          scheduleNextAutoScan();
+        }
+        return;
+      }
+
+      setDetectedFaces(allFaces);
       setPrimaryFace(selFace || null);
       setPrimaryScoreInfo(selScore || null);
 
-      faceTrackerRef.current.updateTrack(allFaces || []);
+      faceTrackerRef.current.updateTrack(allFaces);
       const activeTrackId = faceTrackerRef.current.getActiveTrackId();
 
       const candidateId = (index !== -1 && confidence >= aiSettings.minConfidence) ? pool[index].employeeId : null;
@@ -350,7 +390,7 @@ export default function AttendanceScreen() {
 
       setDebugTelemetry({
         latencyMs: latency,
-        faceCount: (allFaces || []).length,
+        faceCount: allFaces.length,
         targetTrackId: activeTrackId,
         livenessScore: matchResult.livenessScore,
         temporalStatus: tempCheck.isStable ? 'STABLE' : 'BUFFERING',
@@ -368,6 +408,13 @@ export default function AttendanceScreen() {
 
       // Check if match threshold or liveness verification failed
       if (index === -1 || confidence < aiSettings.minConfidence || isCovered || !livenessPassed) {
+        // Face is present but not verified - wipe previous person's card from screen
+        if (verificationResetTimeoutRef.current) {
+          clearTimeout(verificationResetTimeoutRef.current);
+          verificationResetTimeoutRef.current = null;
+        }
+        setLastScanned(null);
+
         if (!isAuto) {
           setScanPhase('failed');
           let failMsg = statusReason || `No face match (${confidence}%) — Try again`;
@@ -391,7 +438,7 @@ export default function AttendanceScreen() {
             setStatusMessage('Waiting for face...');
           } else if (!livenessPassed) {
             setStatusMessage('Position face in frame...');
-          } else if (allFaces && allFaces.length > 1) {
+          } else if (allFaces.length > 1) {
             setStatusMessage(`Primary target selected (${allFaces.length} faces)...`);
           } else if (index === -1) {
             setStatusMessage('Scanning face...');
@@ -408,10 +455,10 @@ export default function AttendanceScreen() {
       const matchedEmp = pool[index];
       const empId = matchedEmp.employeeId;
 
-      // Debounce: prevent the same auto-scan triggering twice within 5 seconds
+      // Debounce: prevent duplicate scan of the SAME employee within 8 seconds if they remain in front of camera
       const nowTs = Date.now();
       const lastScanTs = lastPunchTimeRef.current[empId] || 0;
-      if (isAuto && nowTs - lastScanTs < 5000) {
+      if (isAuto && nowTs - lastScanTs < 8000) {
         isScanningRef.current = false;
         if (isFocused && isCameraReady) scheduleNextAutoScan();
         return;
@@ -463,8 +510,11 @@ export default function AttendanceScreen() {
       });
 
       // Reset after showing verification card (1000ms for Group Scan, 3500ms for Normal)
+      if (verificationResetTimeoutRef.current) {
+        clearTimeout(verificationResetTimeoutRef.current);
+      }
       const holdDuration = groupScanMode ? 1000 : 3500;
-      setTimeout(() => {
+      verificationResetTimeoutRef.current = setTimeout(() => {
         setScanPhase('idle');
         setFaceConfidence(0);
         setLastScanned(null);
@@ -702,7 +752,7 @@ export default function AttendanceScreen() {
                   const isPrimary = f.id === primaryFace?.id;
                   return (
                     <View
-                      key={f.id || `face-${idx}`}
+                      key={`detected-face-${f.id || 'box'}-${idx}`}
                       style={[
                         styles.faceBoundingBox,
                         {

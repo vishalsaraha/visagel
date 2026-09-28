@@ -130,10 +130,10 @@ export async function detectFacesInImage(imageUri: string): Promise<DetectedFace
       { format: ImageManipulator.SaveFormat.PNG, base64: true }
     );
 
-    if (!manip.base64) return createFallbackSingleFace();
+    if (!manip.base64) return [];
 
     const parsed = decodePngPixels(manip.base64);
-    if (!parsed || !parsed.data) return createFallbackSingleFace();
+    if (!parsed || !parsed.data) return [];
 
     const { width, height, data } = parsed;
     const totalPixels = width * height;
@@ -152,20 +152,18 @@ export async function detectFacesInImage(imageUri: string): Promise<DetectedFace
       lum[i] = 0.299 * r + 0.587 * g + 0.114 * b;
     }
 
-    // Multi-scale grid search for skin-saliency & facial structure anchors
+    // Multi-scale grid search for human facial features & structural anchors
     const faces: DetectedFace[] = [];
-    const minFaceSize = 24; // in 160x160 space (~15% of frame)
-    const stepSize = 12;
-
+    const stepSize = 10;
     const detectedRegions: { x: number; y: number; w: number; h: number; score: number }[] = [];
 
-    for (let hSize = 32; hSize <= 112; hSize += 20) {
-      const wSize = Math.round(hSize * 0.85);
+    for (let hSize = 36; hSize <= 112; hSize += 18) {
+      const wSize = Math.round(hSize * 0.82);
       for (let y = 8; y <= height - hSize - 8; y += stepSize) {
         for (let x = 8; x <= width - wSize - 8; x += stepSize) {
-          // Check skin tone ratio & luminance variance inside box
           let skinPixelCount = 0;
           let boxLumSum = 0;
+          let boxSqDiffSum = 0;
           let boxTotal = 0;
 
           for (let py = y; py < y + hSize; py += 2) {
@@ -178,36 +176,97 @@ export async function detectFacesInImage(imageUri: string): Promise<DetectedFace
               boxLumSum += l;
               boxTotal++;
 
-              // YCbCr / RGB Skin model check
-              if (r > 40 && g > 25 && b > 15 && r > g && r > b && Math.abs(r - g) > 8) {
+              // Strict Human Skin Chrominance Model (excludes wood, yellow walls, and carpets)
+              if (
+                r > 48 &&
+                g > 28 &&
+                b > 18 &&
+                r > g &&
+                g >= b * 0.85 &&
+                r - g >= 8 &&
+                r - g <= 85 &&
+                r - b >= 12 &&
+                r / (g + 0.1) <= 2.3
+              ) {
                 skinPixelCount++;
               }
             }
           }
 
+          const boxMeanLum = boxLumSum / (boxTotal || 1);
+          if (boxMeanLum < 30 || boxMeanLum > 230) continue;
+
           const skinRatio = skinPixelCount / (boxTotal || 1);
-          if (skinRatio >= 0.28) {
-            // Check eye-line contrast (upper 35% vs middle 35%)
-            const upperYStart = y + Math.floor(hSize * 0.18);
-            const upperYEnd = y + Math.floor(hSize * 0.45);
-            let eyeZoneLumSum = 0;
-            let eyeZoneCount = 0;
+          if (skinRatio < 0.30) continue;
 
-            for (let py = upperYStart; py < upperYEnd; py++) {
-              for (let px = x + Math.floor(wSize * 0.15); px < x + Math.floor(wSize * 0.85); px++) {
-                eyeZoneLumSum += lum[py * width + px];
-                eyeZoneCount++;
-              }
+          // Reject flat walls, doors, and smooth background surfaces lacking facial texture
+          for (let py = y; py < y + hSize; py += 2) {
+            for (let px = x; px < x + wSize; px += 2) {
+              const idx = py * width + px;
+              const diff = lum[idx] - boxMeanLum;
+              boxSqDiffSum += diff * diff;
             }
+          }
+          const boxStdDev = Math.sqrt(boxSqDiffSum / (boxTotal || 1));
+          if (boxStdDev < 14) continue; // Flat walls and plain furniture have no facial features
 
-            const boxMeanLum = boxLumSum / (boxTotal || 1);
-            const eyeZoneMeanLum = eyeZoneLumSum / (eyeZoneCount || 1);
-
-            // Eyebrow/eye region is naturally darker than forehead/cheeks
-            if (eyeZoneMeanLum < boxMeanLum * 1.05 && boxMeanLum > 25 && boxMeanLum < 240) {
-              const saliencyScore = Math.min(0.98, skinRatio * 0.7 + (1 - eyeZoneMeanLum / 255) * 0.3);
-              detectedRegions.push({ x, y, w: wSize, h: hSize, score: saliencyScore });
+          // Anatomical Facial Feature Triad Verification:
+          // 1. Forehead zone (y: 6%-18%, x: 30%-70%)
+          let foreheadSum = 0, foreheadCount = 0;
+          const fhYStart = y + Math.floor(hSize * 0.06);
+          const fhYEnd = y + Math.floor(hSize * 0.18);
+          for (let py = fhYStart; py < fhYEnd; py++) {
+            for (let px = x + Math.floor(wSize * 0.30); px < x + Math.floor(wSize * 0.70); px++) {
+              foreheadSum += lum[py * width + px];
+              foreheadCount++;
             }
+          }
+          const foreheadLum = foreheadSum / (foreheadCount || 1);
+
+          // 2. Left eye depression (y: 20%-42%, x: 16%-42%)
+          let leftEyeSum = 0, leftEyeCount = 0;
+          const eyeYStart = y + Math.floor(hSize * 0.20);
+          const eyeYEnd = y + Math.floor(hSize * 0.42);
+          for (let py = eyeYStart; py < eyeYEnd; py++) {
+            for (let px = x + Math.floor(wSize * 0.16); px < x + Math.floor(wSize * 0.42); px++) {
+              leftEyeSum += lum[py * width + px];
+              leftEyeCount++;
+            }
+          }
+          const leftEyeLum = leftEyeSum / (leftEyeCount || 1);
+
+          // 3. Right eye depression (y: 20%-42%, x: 58%-84%)
+          let rightEyeSum = 0, rightEyeCount = 0;
+          for (let py = eyeYStart; py < eyeYEnd; py++) {
+            for (let px = x + Math.floor(wSize * 0.58); px < x + Math.floor(wSize * 0.84); px++) {
+              rightEyeSum += lum[py * width + px];
+              rightEyeCount++;
+            }
+          }
+          const rightEyeLum = rightEyeSum / (rightEyeCount || 1);
+
+          // 4. Cheeks & Nose bridge (y: 45%-68%, x: 20%-80%)
+          let cheekSum = 0, cheekCount = 0;
+          const cheekYStart = y + Math.floor(hSize * 0.45);
+          const cheekYEnd = y + Math.floor(hSize * 0.68);
+          for (let py = cheekYStart; py < cheekYEnd; py++) {
+            for (let px = x + Math.floor(wSize * 0.20); px < x + Math.floor(wSize * 0.80); px++) {
+              cheekSum += lum[py * width + px];
+              cheekCount++;
+            }
+          }
+          const cheekLum = cheekSum / (cheekCount || 1);
+
+          // Both eyes must be darker than forehead due to eye sockets and pupils
+          const eyeAvgLum = (leftEyeLum + rightEyeLum) / 2;
+          const eyeContrastOk = leftEyeLum < foreheadLum * 0.98 && rightEyeLum < foreheadLum * 0.98 && eyeAvgLum < cheekLum * 1.03;
+          // Eyes must be bilaterally balanced in luminance
+          const eyeBalanceOk = Math.abs(leftEyeLum - rightEyeLum) / Math.max(1, eyeAvgLum) < 0.38;
+
+          if (eyeContrastOk && eyeBalanceOk) {
+            const eyeDelta = Math.max(0, (foreheadLum - eyeAvgLum) / 255);
+            const saliencyScore = Math.min(0.99, skinRatio * 0.4 + eyeDelta * 0.3 + (boxStdDev / 60) * 0.3);
+            detectedRegions.push({ x, y, w: wSize, h: hSize, score: saliencyScore });
           }
         }
       }
@@ -240,32 +299,14 @@ export async function detectFacesInImage(imageUri: string): Promise<DetectedFace
     }
 
     if (faces.length === 0) {
-      return createFallbackSingleFace();
+      return [];
     }
 
     return faces;
   } catch (err) {
     console.warn('[FaceEngine] Face detection error:', err);
-    return createFallbackSingleFace();
+    return [];
   }
-}
-
-function createFallbackSingleFace(): DetectedFace[] {
-  return [
-    {
-      id: 'face-1',
-      boundingBox: { x: 0.20, y: 0.15, width: 0.60, height: 0.65 },
-      confidence: 0.92,
-      landmarks: {
-        leftEye: { x: 0.38, y: 0.38 },
-        rightEye: { x: 0.62, y: 0.38 },
-        nose: { x: 0.50, y: 0.55 },
-        mouth: { x: 0.50, y: 0.75 },
-        chin: { x: 0.50, y: 0.92 },
-      },
-      qualityScore: 0.88,
-    },
-  ];
 }
 
 function suppressNonMaxBoxes(
@@ -418,6 +459,12 @@ export class FaceTracker {
       }
 
       if (matchedFace && bestIoU >= 0.20) {
+        const previousId = matchedFace.id;
+        for (const f of faces) {
+          if (f !== matchedFace && f.id === this.activeTrackId) {
+            f.id = previousId;
+          }
+        }
         matchedFace.id = this.activeTrackId;
         this.lastBox = matchedFace.boundingBox;
         this.consecutiveMatchCount++;
@@ -467,49 +514,44 @@ export async function cropAndAlignFace(
       rollAngle = Math.atan2(dy, dx) * (180 / Math.PI);
     }
 
-    // 2. Add safety margin (15% padding) around face box
-    const margin = 0.15;
-    const cropX = Math.max(0, faceBox.x - faceBox.width * margin);
-    const cropY = Math.max(0, faceBox.y - faceBox.height * margin);
-    const cropW = Math.min(1.0 - cropX, faceBox.width * (1 + 2 * margin));
-    const cropH = Math.min(1.0 - cropY, faceBox.height * (1 + 2 * margin));
+    // Step 1: Pre-normalize to a fixed 400x400 canvas so normalized coordinates map precisely
+    const baseCanvas = 400;
+    const prepped = await ImageManipulator.manipulateAsync(
+      imageUri,
+      [{ resize: { width: baseCanvas, height: baseCanvas } }],
+      { format: ImageManipulator.SaveFormat.PNG }
+    );
 
-    // We convert normalized coordinates (0..1) to actual pixel dimensions using 800x800 base assumption
-    const baseDim = 800;
-    const originX = Math.round(cropX * baseDim);
-    const originY = Math.round(cropY * baseDim);
-    const width = Math.round(cropW * baseDim);
-    const height = Math.round(cropH * baseDim);
+    // Step 2: Tight face crop - isolate human face and completely eliminate background
+    const cropX = Math.max(0, Math.min(0.85, faceBox.x));
+    const cropY = Math.max(0, Math.min(0.85, faceBox.y));
+    const cropW = Math.max(0.1, Math.min(1.0 - cropX, faceBox.width));
+    const cropH = Math.max(0.1, Math.min(1.0 - cropY, faceBox.height));
 
-    const actions: ImageManipulator.Action[] = [];
+    const originX = Math.max(0, Math.min(baseCanvas - 10, Math.round(cropX * baseCanvas)));
+    const originY = Math.max(0, Math.min(baseCanvas - 10, Math.round(cropY * baseCanvas)));
+    const width = Math.max(10, Math.min(baseCanvas - originX, Math.round(cropW * baseCanvas)));
+    const height = Math.max(10, Math.min(baseCanvas - originY, Math.round(cropH * baseCanvas)));
 
-    if (originX >= 0 && originY >= 0 && width > 40 && height > 40) {
-      actions.push({
-        crop: { originX, originY, width, height },
-      });
-    }
+    const actions: ImageManipulator.Action[] = [
+      { crop: { originX, originY, width, height } }
+    ];
 
-    if (Math.abs(rollAngle) > 4) {
+    if (Math.abs(rollAngle) > 4 && Math.abs(rollAngle) < 45) {
       actions.push({ rotate: -rollAngle });
     }
 
     actions.push({ resize: { width: 112, height: 112 } });
 
-    const result = await ImageManipulator.manipulateAsync(imageUri, actions, {
+    const result = await ImageManipulator.manipulateAsync(prepped.uri, actions, {
       format: ImageManipulator.SaveFormat.PNG,
       base64: true,
     });
 
     return { croppedUri: result.uri, base64: result.base64 };
   } catch (err) {
-    console.warn('[FaceEngine] Face crop alignment fallback:', err);
-    // Fallback: simple resize to 112x112
-    const fallback = await ImageManipulator.manipulateAsync(
-      imageUri,
-      [{ resize: { width: 112, height: 112 } }],
-      { format: ImageManipulator.SaveFormat.PNG, base64: true }
-    );
-    return { croppedUri: fallback.uri, base64: fallback.base64 };
+    console.warn('[FaceEngine] Face crop error:', err);
+    return { croppedUri: imageUri, base64: undefined };
   }
 }
 
@@ -517,7 +559,8 @@ export async function cropAndAlignFace(
 
 /**
  * Extracts a normalized 128-dimensional biometric feature vector from an image frame.
- * If faceBox is provided, crops and isolates the face region first before extracting features.
+ * If faceBox is not provided, detects and isolates the face first.
+ * Never extracts vectors from background scenes without a detected human face.
  */
 export async function extractFaceVector(
   imageUri: string,
@@ -527,16 +570,21 @@ export async function extractFaceVector(
   try {
     let base64Data: string | undefined;
 
+    if (!faceBox) {
+      // Isolate face first to eliminate background
+      const faces = await detectFacesInImage(imageUri);
+      if (faces.length > 0) {
+        faceBox = faces[0].boundingBox;
+        landmarks = faces[0].landmarks;
+      }
+    }
+
     if (faceBox) {
       const cropped = await cropAndAlignFace(imageUri, faceBox, landmarks);
       base64Data = cropped.base64;
     } else {
-      const manip = await ImageManipulator.manipulateAsync(
-        imageUri,
-        [{ resize: { width: 112, height: 112 } }],
-        { format: ImageManipulator.SaveFormat.PNG, base64: true }
-      );
-      base64Data = manip.base64;
+      // No human face present in image - do NOT extract vector from background scene!
+      return new Array(128).fill(0);
     }
 
     if (!base64Data) return new Array(128).fill(0);
@@ -933,6 +981,14 @@ export async function validateEnrollmentPhotoQuality(imageUri: string): Promise<
   try {
     const faces = await detectFacesInImage(imageUri);
     const primary = faces[0];
+    if (!primary) {
+      return {
+        isValid: false,
+        score: 0,
+        issues: ['No human face detected in image'],
+        feedback: 'Position your face clearly in front of camera with good lighting.',
+      };
+    }
 
     const manip = await ImageManipulator.manipulateAsync(
       imageUri,

@@ -23,20 +23,22 @@ const THEME_COLOR = '#FF6900';
 
 type TimeRange = '7D' | '30D' | 'Month';
 
+const TIME_RANGES: { id: TimeRange; label: string }[] = [
+  { id: '7D', label: 'Last 7 Days' },
+  { id: '30D', label: 'Last 30 Days' },
+  { id: 'Month', label: 'This Month' },
+];
+
 export default function AnalyticsScreen() {
   const router = useRouter();
   const { logout } = useAuth();
   const { attendanceRecords, enrolledEmployees, departments, leaves } = useAttendance();
   const [timeRange, setTimeRange] = useState<TimeRange>('7D');
 
-  // Generate date series based on time range
   const dateSeries = useMemo(() => {
     let days = 7;
-    if (timeRange === '30D') {
-      days = 30;
-    } else if (timeRange === 'Month') {
-      days = Math.max(1, new Date().getDate());
-    }
+    if (timeRange === '30D') days = 30;
+    else if (timeRange === 'Month') days = Math.max(1, new Date().getDate());
     const list: string[] = [];
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date();
@@ -46,7 +48,6 @@ export default function AnalyticsScreen() {
     return list;
   }, [timeRange]);
 
-  // Daily statistics for charts
   const dailyStats = useMemo(() => {
     const totalEmp = enrolledEmployees.length || 1;
     return dateSeries.map((dateStr) => {
@@ -54,46 +55,25 @@ export default function AnalyticsScreen() {
       const present = records.filter((r) => r.status === 'PRESENT').length;
       const late = records.filter((r) => r.status === 'LATE').length;
       const halfDay = records.filter((r) => r.status === 'HALF_DAY').length;
-      const onLeave = leaves.filter(
-        (l) => l.startDate <= dateStr && l.endDate >= dateStr && l.status === 'APPROVED'
-      ).length;
       const totalActive = present + late + halfDay;
       const rate = Math.round((totalActive / totalEmp) * 100);
-
       const dObj = new Date(dateStr);
       const dayLabel = dObj.toLocaleDateString('en-US', { weekday: 'narrow' });
       const dateNum = dObj.getDate();
-
-      return {
-        date: dateStr,
-        dayLabel,
-        dateNum,
-        present,
-        late,
-        halfDay,
-        onLeave,
-        totalActive,
-        rate: Math.min(100, rate),
-      };
+      return { date: dateStr, dayLabel, dateNum, present, late, halfDay, totalActive, rate: Math.min(100, rate) };
     });
-  }, [dateSeries, attendanceRecords, enrolledEmployees, leaves]);
+  }, [dateSeries, attendanceRecords, enrolledEmployees]);
 
-  // Overall KPI aggregates
   const overallKpis = useMemo(() => {
     const totalSlots = (enrolledEmployees.length || 1) * dateSeries.length;
     const allRecords = attendanceRecords.filter((r) => dateSeries.includes(r.date));
     const totalPresents = allRecords.length;
     const totalLates = allRecords.filter((r) => r.status === 'LATE').length;
     const totalOnTime = allRecords.filter((r) => r.status === 'PRESENT').length;
-
     const avgAttendanceRate = Math.round((totalPresents / totalSlots) * 100) || 0;
     const punctualityRate = totalPresents > 0 ? Math.round((totalOnTime / totalPresents) * 100) : 100;
-
     let totalPunches = 0;
-    for (const r of allRecords) {
-      totalPunches += r.punches.length;
-    }
-
+    for (const r of allRecords) totalPunches += r.punches.length;
     return {
       avgAttendanceRate: Math.min(100, avgAttendanceRate),
       punctualityRate,
@@ -103,57 +83,30 @@ export default function AnalyticsScreen() {
     };
   }, [dateSeries, attendanceRecords, enrolledEmployees]);
 
-  // Department breakdown heatmap
   const departmentStats = useMemo(() => {
     const list = departments.length > 0 ? departments : ['Engineering', 'HR & Admin', 'Design', 'Operations'];
     return list.map((dept) => {
       const deptEmployees = enrolledEmployees.filter((e) => e.department === dept);
       const empIds = new Set(deptEmployees.map((e) => e.employeeId));
-      const deptRecords = attendanceRecords.filter(
-        (r) => dateSeries.includes(r.date) && empIds.has(r.employeeId)
-      );
-
+      const deptRecords = attendanceRecords.filter((r) => dateSeries.includes(r.date) && empIds.has(r.employeeId));
       const possibleSlots = (deptEmployees.length || 1) * dateSeries.length;
       const actualPresents = deptRecords.length;
       const rate = possibleSlots > 0 ? Math.round((actualPresents / possibleSlots) * 100) : 0;
       const lateCount = deptRecords.filter((r) => r.status === 'LATE').length;
       const lateRate = actualPresents > 0 ? Math.round((lateCount / actualPresents) * 100) : 0;
-
-      return {
-        department: dept,
-        totalEmployees: deptEmployees.length,
-        attendanceRate: Math.min(100, rate),
-        lateRate,
-        totalRecords: actualPresents,
-      };
+      return { department: dept, totalEmployees: deptEmployees.length, attendanceRate: Math.min(100, rate), lateRate, totalRecords: actualPresents };
     }).sort((a, b) => b.attendanceRate - a.attendanceRate);
   }, [departments, enrolledEmployees, attendanceRecords, dateSeries]);
 
-  // Punctuality Leaderboard
   const leaderboard = useMemo(() => {
-    return enrolledEmployees
-      .map((emp) => {
-        const empRecords = attendanceRecords.filter(
-          (r) => dateSeries.includes(r.date) && r.employeeId === emp.employeeId
-        );
-        const presentCount = empRecords.filter((r) => r.status === 'PRESENT').length;
-        const lateCount = empRecords.filter((r) => r.status === 'LATE').length;
-        const total = empRecords.length;
-        const score = total > 0 ? Math.round((presentCount / total) * 100) : 0;
-
-        return {
-          employeeId: emp.employeeId,
-          name: emp.name,
-          department: emp.department,
-          presentCount,
-          lateCount,
-          total,
-          score,
-        };
-      })
-      .filter((e) => e.total > 0)
-      .sort((a, b) => b.score - a.score || b.presentCount - a.presentCount)
-      .slice(0, 5);
+    return enrolledEmployees.map((emp) => {
+      const empRecords = attendanceRecords.filter((r) => dateSeries.includes(r.date) && r.employeeId === emp.employeeId);
+      const presentCount = empRecords.filter((r) => r.status === 'PRESENT').length;
+      const lateCount = empRecords.filter((r) => r.status === 'LATE').length;
+      const total = empRecords.length;
+      const score = total > 0 ? Math.round((presentCount / total) * 100) : 0;
+      return { employeeId: emp.employeeId, name: emp.name, department: emp.department, presentCount, lateCount, total, score };
+    }).filter((e) => e.total > 0).sort((a, b) => b.score - a.score || b.presentCount - a.presentCount).slice(0, 5);
   }, [enrolledEmployees, attendanceRecords, dateSeries]);
 
   const handleExportAnalytics = async () => {
@@ -164,26 +117,19 @@ export default function AnalyticsScreen() {
       csv += `Punctuality Rate,${overallKpis.punctualityRate}%\n`;
       csv += `Total Punches Logged,${overallKpis.totalPunches}\n`;
       csv += `Total Late Arrivals,${overallKpis.totalLates}\n\n`;
-
       csv += 'Department,Employees,Attendance Rate %,Late Rate %\n';
       for (const d of departmentStats) {
         csv += `"${d.department}",${d.totalEmployees},${d.attendanceRate}%,${d.lateRate}%\n`;
       }
-
       csv += '\nTop Punctual Employees,ID,Department,On-Time Score %,On-Time Days\n';
       leaderboard.forEach((l, idx) => {
         csv += `${idx + 1}. "${l.name}","${l.employeeId}","${l.department}",${l.score}%,${l.presentCount}\n`;
       });
-
       const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory;
       const fileUri = `${baseDir}attendance_analytics_${Date.now()}.csv`;
       await FileSystem.writeAsStringAsync(fileUri, csv);
-
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(fileUri, {
-          mimeType: 'text/csv',
-          dialogTitle: 'Export Attendance Analytics',
-        });
+        await Sharing.shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: 'Export Attendance Analytics' });
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Export failed';
@@ -191,47 +137,32 @@ export default function AnalyticsScreen() {
     }
   };
 
+  const getHealthColor = (rate: number) => (rate >= 85 ? '#10B981' : rate >= 65 ? '#F59E0B' : '#EF4444');
+  const getHealthBg = (rate: number) => (rate >= 85 ? '#ECFDF5' : rate >= 65 ? '#FFFBEB' : '#FEF2F2');
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
-      {/* Header */}
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>Analytics</Text>
-          <Text style={styles.headerSubtitle}>Trends & punctuality intelligence</Text>
+          <Text style={styles.headerSubtitle}>Workforce attendance intelligence</Text>
           <View style={styles.headerUnderline} />
         </View>
-
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <TouchableOpacity
-            style={styles.exportBtn}
-            onPress={handleExportAnalytics}
-            activeOpacity={0.8}
-          >
+          <TouchableOpacity style={styles.exportBtn} onPress={handleExportAnalytics} activeOpacity={0.8}>
             <FontAwesome name="download" size={11} color="#FF6900" style={{ marginRight: 4 }} />
             <Text style={styles.exportBtnText}>Export</Text>
           </TouchableOpacity>
-
           <TouchableOpacity
             style={styles.lockBtn}
             activeOpacity={0.8}
             onPress={() => {
-              ThemedAlert.alert(
-                'Lock Screen',
-                'Lock Admin and return to Attendance Screen?',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  {
-                    text: 'Lock',
-                    style: 'destructive',
-                    onPress: () => {
-                      logout();
-                      router.replace('/');
-                    },
-                  },
-                ]
-              );
+              ThemedAlert.alert('Lock Screen', 'Lock Admin and return to Attendance Screen?', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Lock', style: 'destructive', onPress: () => { logout(); router.replace('/'); } },
+              ]);
             }}
           >
             <FontAwesome name="lock" size={12} color="#EF4444" style={{ marginRight: 4 }} />
@@ -241,15 +172,9 @@ export default function AnalyticsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Time Range Selector */}
+
         <View style={styles.timeRangeBar}>
-          {(
-            [
-              { id: '7D', label: 'Last 7 Days' },
-              { id: '30D', label: 'Last 30 Days' },
-              { id: 'Month', label: 'This Month' },
-            ] as const
-          ).map((t) => (
+          {TIME_RANGES.map((t) => (
             <TouchableOpacity
               key={t.id}
               style={[styles.rangePill, timeRange === t.id && styles.rangePillActive]}
@@ -263,75 +188,90 @@ export default function AnalyticsScreen() {
           ))}
         </View>
 
-        {/* Top KPI Cards Grid */}
-        <View style={styles.kpiGrid}>
-          <View style={styles.kpiCard}>
-            <View style={[styles.kpiIconWrap, { backgroundColor: '#ECFDF5' }]}>
-              <MaterialCommunityIcons name="percent-outline" size={18} color="#059669" />
+        {/* KPI Summary Band */}
+        <View style={styles.kpiBand}>
+          <View style={styles.kpiBig}>
+            <View style={styles.kpiBigIconWrap}>
+              <MaterialCommunityIcons name="chart-donut" size={22} color="#FF6900" />
             </View>
-            <Text style={[styles.kpiValue, { color: '#059669' }]}>{overallKpis.avgAttendanceRate}%</Text>
-            <Text style={styles.kpiLabel}>Attendance Rate</Text>
+            <Text style={styles.kpiBigValue}>{overallKpis.avgAttendanceRate}%</Text>
+            <Text style={styles.kpiBigLabel}>Avg Attendance</Text>
+            <View style={[styles.kpiHealthDot, { backgroundColor: getHealthColor(overallKpis.avgAttendanceRate) }]} />
           </View>
-
-          <View style={styles.kpiCard}>
-            <View style={[styles.kpiIconWrap, { backgroundColor: '#EFF6FF' }]}>
-              <MaterialCommunityIcons name="clock-check-outline" size={18} color="#2563EB" />
+          <View style={styles.kpiBandDivider} />
+          <View style={styles.kpiMiniStack}>
+            <View style={styles.kpiMiniRow}>
+              <View style={[styles.kpiMiniIconWrap, { backgroundColor: '#EFF6FF' }]}>
+                <MaterialCommunityIcons name="clock-check-outline" size={14} color="#2563EB" />
+              </View>
+              <View>
+                <Text style={[styles.kpiMiniValue, { color: '#2563EB' }]}>{overallKpis.punctualityRate}%</Text>
+                <Text style={styles.kpiMiniLabel}>Punctuality</Text>
+              </View>
             </View>
-            <Text style={[styles.kpiValue, { color: '#2563EB' }]}>{overallKpis.punctualityRate}%</Text>
-            <Text style={styles.kpiLabel}>Punctuality Rate</Text>
-          </View>
-
-          <View style={styles.kpiCard}>
-            <View style={[styles.kpiIconWrap, { backgroundColor: '#FFF7ED' }]}>
-              <MaterialCommunityIcons name="gesture-tap" size={18} color="#EA580C" />
+            <View style={styles.kpiMiniDivider} />
+            <View style={styles.kpiMiniRow}>
+              <View style={[styles.kpiMiniIconWrap, { backgroundColor: '#FFF7ED' }]}>
+                <MaterialCommunityIcons name="gesture-tap" size={14} color="#EA580C" />
+              </View>
+              <View>
+                <Text style={[styles.kpiMiniValue, { color: '#EA580C' }]}>{overallKpis.totalPunches}</Text>
+                <Text style={styles.kpiMiniLabel}>Total Punches</Text>
+              </View>
             </View>
-            <Text style={[styles.kpiValue, { color: '#EA580C' }]}>{overallKpis.totalPunches}</Text>
-            <Text style={styles.kpiLabel}>Total Punches</Text>
-          </View>
-
-          <View style={styles.kpiCard}>
-            <View style={[styles.kpiIconWrap, { backgroundColor: '#FEF2F2' }]}>
-              <MaterialCommunityIcons name="alert-circle-outline" size={18} color="#DC2626" />
+            <View style={styles.kpiMiniDivider} />
+            <View style={styles.kpiMiniRow}>
+              <View style={[styles.kpiMiniIconWrap, { backgroundColor: '#FEF2F2' }]}>
+                <MaterialCommunityIcons name="account-alert-outline" size={14} color="#DC2626" />
+              </View>
+              <View>
+                <Text style={[styles.kpiMiniValue, { color: '#DC2626' }]}>{overallKpis.totalLates}</Text>
+                <Text style={styles.kpiMiniLabel}>Late Arrivals</Text>
+              </View>
             </View>
-            <Text style={[styles.kpiValue, { color: '#DC2626' }]}>{overallKpis.totalLates}</Text>
-            <Text style={styles.kpiLabel}>Late Arrivals</Text>
           </View>
         </View>
 
-        {/* Attendance Trend Chart Card */}
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeaderRow}>
+        {/* Attendance Trend Chart */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <MaterialCommunityIcons name="chart-bar" size={18} color="#FF6900" style={{ marginRight: 6 }} />
-              <Text style={styles.sectionCardTitle}>Daily Attendance Trend</Text>
+              <View style={styles.cardHeaderIcon}>
+                <MaterialCommunityIcons name="chart-bar" size={15} color="#FF6900" />
+              </View>
+              <Text style={styles.cardTitle}>Daily Attendance Trend</Text>
             </View>
             <View style={styles.legendRow}>
-              <View style={[styles.legendDot, { backgroundColor: '#059669' }]} />
+              <View style={[styles.legendDot, { backgroundColor: '#10B981' }]} />
               <Text style={styles.legendText}>On Time</Text>
-              <View style={[styles.legendDot, { backgroundColor: '#D97706', marginLeft: 8 }]} />
+              <View style={[styles.legendDot, { backgroundColor: '#F59E0B', marginLeft: 8 }]} />
               <Text style={styles.legendText}>Late</Text>
             </View>
           </View>
-
-          {/* Bar Chart Visualizer */}
-          <View style={styles.chartContainer}>
+          <View style={styles.chartArea}>
+            <View style={styles.chartGrid}>
+              {[100, 75, 50, 25, 0].map((v) => (
+                <View key={v} style={styles.gridLine}>
+                  <Text style={styles.gridLabel}>{v}%</Text>
+                  <View style={styles.gridLineBar} />
+                </View>
+              ))}
+            </View>
             <View style={styles.barsRow}>
               {dailyStats.map((item) => {
-                const barHeight = Math.max(8, (item.rate / 100) * 110);
+                const barMaxH = 110;
+                const barH = Math.max(4, (item.rate / 100) * barMaxH);
                 const lateRatio = item.totalActive > 0 ? item.late / item.totalActive : 0;
-                const lateHeight = barHeight * lateRatio;
-                const onTimeHeight = barHeight - lateHeight;
-
+                const lateH = barH * lateRatio;
+                const onTimeH = barH - lateH;
                 return (
-                  <View key={item.date} style={styles.barColumn}>
-                    <Text style={styles.barRateText}>{item.rate}%</Text>
-                    <View style={styles.barTrack}>
-                      <View style={[styles.barFillLate, { height: lateHeight }]} />
-                      <View style={[styles.barFillOnTime, { height: onTimeHeight }]} />
+                  <View key={item.date} style={styles.barCol}>
+                    {item.rate > 0 && <Text style={styles.barRateLbl}>{item.rate}%</Text>}
+                    <View style={[styles.barTrack, { height: barMaxH }]}>
+                      <View style={[styles.barSegLate, { height: lateH }]} />
+                      <View style={[styles.barSegOnTime, { height: onTimeH }]} />
                     </View>
-                    <Text style={styles.barDateLabel} numberOfLines={1}>
-                      {timeRange === '7D' ? item.dayLabel : item.dateNum}
-                    </Text>
+                    <Text style={styles.barDateLbl}>{timeRange === '7D' ? item.dayLabel : item.dateNum}</Text>
                   </View>
                 );
               })}
@@ -339,84 +279,85 @@ export default function AnalyticsScreen() {
           </View>
         </View>
 
-        {/* Department Attendance Heatmap */}
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeaderRow}>
+        {/* Department Breakdown */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <MaterialCommunityIcons name="layers-outline" size={18} color="#7C3AED" style={{ marginRight: 6 }} />
-              <Text style={styles.sectionCardTitle}>Department Breakdown</Text>
-            </View>
-            <Text style={styles.sectionCardMeta}>{departmentStats.length} Depts</Text>
-          </View>
-
-          <View style={{ marginTop: 10, gap: 12 }}>
-            {departmentStats.map((dept) => (
-              <View key={dept.department} style={styles.deptItem}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <Text style={styles.deptNameText}>{dept.department}</Text>
-                  <Text style={styles.deptRateText}>
-                    {dept.attendanceRate}% <Text style={{ color: '#94A3B8', fontSize: 10 }}>({dept.totalEmployees} staff)</Text>
-                  </Text>
-                </View>
-
-                {/* Progress bar */}
-                <View style={styles.deptBarTrack}>
-                  <View
-                    style={[
-                      styles.deptBarFill,
-                      {
-                        width: `${dept.attendanceRate}%`,
-                        backgroundColor:
-                          dept.attendanceRate >= 85
-                            ? '#059669'
-                            : dept.attendanceRate >= 65
-                              ? '#D97706'
-                              : '#DC2626',
-                      },
-                    ]}
-                  />
-                </View>
-
-                {dept.lateRate > 0 && (
-                  <Text style={styles.deptLateMeta}>⚠️ {dept.lateRate}% late arrival frequency</Text>
-                )}
+              <View style={[styles.cardHeaderIcon, { backgroundColor: '#F5F3FF' }]}>
+                <MaterialCommunityIcons name="layers-outline" size={15} color="#7C3AED" />
               </View>
-            ))}
+              <Text style={styles.cardTitle}>Department Breakdown</Text>
+            </View>
+            <View style={styles.deptCountBadge}>
+              <Text style={styles.deptCountText}>{departmentStats.length} Dept</Text>
+            </View>
+          </View>
+          <View style={{ gap: 14, marginTop: 6 }}>
+            {departmentStats.map((dept, idx) => {
+              const barColor = getHealthColor(dept.attendanceRate);
+              const rankLabel = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null;
+              return (
+                <View key={dept.department}>
+                  <View style={styles.deptRow}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                      {rankLabel && <Text style={styles.deptRank}>{rankLabel}</Text>}
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.deptName}>{dept.department}</Text>
+                        <Text style={styles.deptMeta}>{dept.totalEmployees} staff · {dept.totalRecords} records</Text>
+                      </View>
+                    </View>
+                    <View style={[styles.deptRateBadge, { backgroundColor: getHealthBg(dept.attendanceRate) }]}>
+                      <Text style={[styles.deptRateText, { color: barColor }]}>{dept.attendanceRate}%</Text>
+                    </View>
+                  </View>
+                  <View style={styles.deptBarTrack}>
+                    <View style={[styles.deptBarFill, { width: `${dept.attendanceRate}%`, backgroundColor: barColor }]} />
+                  </View>
+                  {dept.lateRate > 0 && (
+                    <View style={styles.deptLateBadge}>
+                      <MaterialCommunityIcons name="clock-alert-outline" size={10} color="#D97706" style={{ marginRight: 3 }} />
+                      <Text style={styles.deptLateText}>{dept.lateRate}% late frequency</Text>
+                    </View>
+                  )}
+                </View>
+              );
+            })}
           </View>
         </View>
 
         {/* Punctuality Leaderboard */}
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeaderRow}>
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <MaterialCommunityIcons name="trophy-award" size={18} color="#F59E0B" style={{ marginRight: 6 }} />
-              <Text style={styles.sectionCardTitle}>Punctuality Leaderboard</Text>
+              <View style={[styles.cardHeaderIcon, { backgroundColor: '#FFFBEB' }]}>
+                <MaterialCommunityIcons name="trophy" size={15} color="#F59E0B" />
+              </View>
+              <Text style={styles.cardTitle}>Punctuality Leaderboard</Text>
             </View>
-            <Text style={styles.sectionCardMeta}>Top 5 On-Time</Text>
+            <Text style={styles.leaderSubtitle}>Top 5 On-Time</Text>
           </View>
-
           {leaderboard.length === 0 ? (
-            <View style={{ padding: 18, alignItems: 'center' }}>
-              <Text style={{ color: '#94A3B8', fontSize: 12 }}>No punctuality records recorded for this range.</Text>
+            <View style={styles.emptyState}>
+              <MaterialCommunityIcons name="podium-silver" size={36} color="#CBD5E1" />
+              <Text style={styles.emptyStateText}>No data for this period</Text>
             </View>
           ) : (
-            <View style={{ marginTop: 8, gap: 8 }}>
+            <View style={{ gap: 8, marginTop: 4 }}>
               {leaderboard.map((item, idx) => {
                 const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
+                const isTop = idx === 0;
                 return (
-                  <View key={item.employeeId} style={styles.leaderRow}>
-                    <Text style={styles.leaderRank}>{medal}</Text>
-                    <View style={{ flex: 1, marginLeft: 8 }}>
-                      <Text style={styles.leaderName}>{item.name}</Text>
-                      <Text style={styles.leaderDept}>
-                        {item.employeeId} · {item.department}
-                      </Text>
+                  <View key={item.employeeId} style={[styles.leaderRow, isTop && styles.leaderRowTop]}>
+                    <Text style={[styles.leaderMedal, isTop && { fontSize: 20 }]}>{medal}</Text>
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={[styles.leaderName, isTop && { color: '#FF6900' }]} numberOfLines={1}>{item.name}</Text>
+                      <Text style={styles.leaderMeta}>{item.employeeId} · {item.department}</Text>
                     </View>
                     <View style={{ alignItems: 'flex-end' }}>
-                      <View style={styles.leaderScoreBadge}>
-                        <Text style={styles.leaderScoreText}>{item.score}% On-Time</Text>
+                      <View style={[styles.scoreBadge, { backgroundColor: isTop ? '#FFF7ED' : '#F8FAFC', borderColor: isTop ? '#FFEDD5' : '#E2E8F0' }]}>
+                        <Text style={[styles.scoreText, { color: isTop ? '#FF6900' : '#059669' }]}>{item.score}%</Text>
                       </View>
-                      <Text style={styles.leaderDaysText}>{item.presentCount} days present</Text>
+                      <Text style={styles.leaderDays}>{item.presentCount}d present</Text>
                     </View>
                   </View>
                 );
@@ -424,13 +365,35 @@ export default function AnalyticsScreen() {
             </View>
           )}
         </View>
+
+        {/* Summary Footer */}
+        <View style={[styles.card, { backgroundColor: '#0F172A', borderColor: '#1E293B' }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+            <MaterialCommunityIcons name="information-outline" size={14} color="#64748B" style={{ marginRight: 6 }} />
+            <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', letterSpacing: 0.5 }}>PERIOD SUMMARY</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            {[
+              { label: 'Days Tracked', value: dateSeries.length },
+              { label: 'Enrolled', value: enrolledEmployees.length },
+              { label: 'Records', value: overallKpis.totalRecords },
+              { label: 'Late Count', value: overallKpis.totalLates },
+            ].map((s) => (
+              <View key={s.label} style={{ alignItems: 'center' }}>
+                <Text style={{ fontSize: 18, fontWeight: '800', color: '#FFFFFF' }}>{s.value}</Text>
+                <Text style={{ fontSize: 10, color: '#64748B', fontWeight: '600', marginTop: 2 }}>{s.label}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F1F5F9' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -467,171 +430,161 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   lockBtnText: { fontSize: 11, fontWeight: '700', color: '#EF4444' },
-  scrollContent: { padding: 14, paddingBottom: 30 },
+  scrollContent: { padding: 14, paddingBottom: 36, gap: 12 },
   timeRangeBar: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
     padding: 4,
     borderRadius: 12,
-    marginBottom: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  rangePill: {
-    flex: 1,
-    paddingVertical: 6,
-    alignItems: 'center',
-    borderRadius: 9,
-  },
-  rangePillActive: {
-    backgroundColor: '#FF6900',
-  },
-  rangePillText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  rangePillTextActive: {
-    color: '#FFFFFF',
-  },
-  kpiGrid: {
+  rangePill: { flex: 1, paddingVertical: 7, alignItems: 'center', borderRadius: 9 },
+  rangePillActive: { backgroundColor: '#FF6900' },
+  rangePillText: { fontSize: 12, fontWeight: '700', color: '#64748B' },
+  rangePillTextActive: { color: '#FFFFFF' },
+  kpiBand: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 12,
-  },
-  kpiCard: {
-    flex: 1,
-    minWidth: '47%',
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
   },
-  kpiIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+  kpiBig: {
+    flex: 1.1,
+    padding: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 8,
+    backgroundColor: '#FFFBF7',
+    gap: 4,
   },
-  kpiValue: { fontSize: 20, fontWeight: '800' },
-  kpiLabel: { fontSize: 11, color: '#64748B', fontWeight: '600', marginTop: 2 },
-  sectionCard: {
+  kpiBigIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#FFF7ED',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  kpiBigValue: { fontSize: 34, fontWeight: '900', color: '#FF6900', letterSpacing: -1 },
+  kpiBigLabel: { fontSize: 11, fontWeight: '700', color: '#94A3B8' },
+  kpiHealthDot: { width: 8, height: 8, borderRadius: 4, marginTop: 4 },
+  kpiBandDivider: { width: 1, backgroundColor: '#F1F5F9' },
+  kpiMiniStack: { flex: 1, padding: 14 },
+  kpiMiniRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
+  kpiMiniIconWrap: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  kpiMiniValue: { fontSize: 15, fontWeight: '800' },
+  kpiMiniLabel: { fontSize: 10, color: '#94A3B8', fontWeight: '600' },
+  kpiMiniDivider: { height: 1, backgroundColor: '#F1F5F9' },
+  card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 14,
+    borderRadius: 16,
+    padding: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    marginBottom: 12,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
   },
-  sectionHeaderRow: {
+  cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 14,
   },
-  sectionCardTitle: { fontSize: 14, fontWeight: '800', color: '#0F172A' },
-  sectionCardMeta: { fontSize: 11, fontWeight: '700', color: '#94A3B8' },
+  cardHeaderIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    backgroundColor: '#FFF7ED',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  cardTitle: { fontSize: 14, fontWeight: '800', color: '#0F172A' },
   legendRow: { flexDirection: 'row', alignItems: 'center' },
-  legendDot: { width: 8, height: 8, borderRadius: 4, marginRight: 4 },
+  legendDot: { width: 7, height: 7, borderRadius: 3.5, marginRight: 3 },
   legendText: { fontSize: 10, color: '#64748B', fontWeight: '600' },
-  chartContainer: {
-    height: 155,
-    paddingTop: 10,
+  chartArea: { height: 160 },
+  chartGrid: {
+    position: 'absolute',
+    top: 0,
+    left: 32,
+    right: 0,
+    bottom: 22,
+    justifyContent: 'space-between',
   },
+  gridLine: { flexDirection: 'row', alignItems: 'center' },
+  gridLabel: { fontSize: 9, color: '#CBD5E1', fontWeight: '600', width: 24, textAlign: 'right', marginRight: 6 },
+  gridLineBar: { flex: 1, height: 1, backgroundColor: '#F1F5F9' },
   barsRow: {
-    flex: 1,
+    position: 'absolute',
+    left: 62,
+    right: 0,
+    bottom: 22,
+    top: 0,
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-around',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-    paddingBottom: 4,
   },
-  barColumn: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  barRateText: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#64748B',
-    marginBottom: 3,
-  },
+  barCol: { alignItems: 'center', flex: 1 },
+  barRateLbl: { fontSize: 8, fontWeight: '700', color: '#94A3B8', marginBottom: 2 },
   barTrack: {
-    width: 14,
-    height: 110,
+    width: 13,
     backgroundColor: '#F1F5F9',
-    borderRadius: 7,
+    borderRadius: 6,
     justifyContent: 'flex-end',
     overflow: 'hidden',
   },
-  barFillOnTime: {
-    width: '100%',
-    backgroundColor: '#059669',
+  barSegOnTime: { width: '100%', backgroundColor: '#10B981' },
+  barSegLate: { width: '100%', backgroundColor: '#F59E0B' },
+  barDateLbl: { fontSize: 10, fontWeight: '700', color: '#94A3B8', marginTop: 5 },
+  deptCountBadge: {
+    backgroundColor: '#F5F3FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
   },
-  barFillLate: {
-    width: '100%',
-    backgroundColor: '#D97706',
-  },
-  barDateLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#64748B',
-    marginTop: 6,
-  },
-  deptItem: {},
-  deptNameText: { fontSize: 12.5, fontWeight: '700', color: '#0F172A' },
-  deptRateText: { fontSize: 12, fontWeight: '800', color: '#059669' },
-  deptBarTrack: {
-    height: 8,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  deptBarFill: {
-    height: '100%',
-    borderRadius: 4,
-  },
-  deptLateMeta: {
-    fontSize: 10,
-    color: '#D97706',
-    fontWeight: '600',
-    marginTop: 3,
-  },
+  deptCountText: { fontSize: 10, fontWeight: '800', color: '#7C3AED' },
+  deptRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  deptRank: { fontSize: 14, marginRight: 6 },
+  deptName: { fontSize: 13, fontWeight: '700', color: '#0F172A' },
+  deptMeta: { fontSize: 10, color: '#94A3B8', fontWeight: '500', marginTop: 1 },
+  deptRateBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  deptRateText: { fontSize: 12, fontWeight: '800' },
+  deptBarTrack: { height: 7, backgroundColor: '#F1F5F9', borderRadius: 4, overflow: 'hidden' },
+  deptBarFill: { height: '100%', borderRadius: 4 },
+  deptLateBadge: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  deptLateText: { fontSize: 10, color: '#D97706', fontWeight: '600' },
+  leaderSubtitle: { fontSize: 11, fontWeight: '700', color: '#94A3B8' },
   leaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    padding: 10,
+    borderRadius: 12,
+    padding: 11,
     borderWidth: 1,
     borderColor: '#F1F5F9',
   },
-  leaderRank: { fontSize: 16, fontWeight: '800', width: 28, textAlign: 'center' },
-  leaderName: { fontSize: 12.5, fontWeight: '800', color: '#0F172A' },
-  leaderDept: { fontSize: 11, color: '#64748B', marginTop: 1 },
-  leaderScoreBadge: {
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  leaderScoreText: { fontSize: 10, fontWeight: '800', color: '#059669' },
-  leaderDaysText: { fontSize: 10, color: '#94A3B8', marginTop: 2 },
+  leaderRowTop: { backgroundColor: '#FFFBF7', borderColor: '#FFEDD5' },
+  leaderMedal: { fontSize: 18, width: 26, textAlign: 'center' },
+  leaderName: { fontSize: 13, fontWeight: '800', color: '#0F172A' },
+  leaderMeta: { fontSize: 10, color: '#94A3B8', marginTop: 1 },
+  scoreBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, borderWidth: 1 },
+  scoreText: { fontSize: 11, fontWeight: '800' },
+  leaderDays: { fontSize: 10, color: '#94A3B8', marginTop: 3 },
+  emptyState: { alignItems: 'center', paddingVertical: 24, gap: 8 },
+  emptyStateText: { fontSize: 13, color: '#94A3B8', fontWeight: '600' },
 });
+

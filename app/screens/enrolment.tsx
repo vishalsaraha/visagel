@@ -12,6 +12,7 @@ import {
   FlatList,
   Animated,
   Pressable,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -26,7 +27,7 @@ import AppDateTimePicker from '@/components/AppDateTimePicker';
 import { ThemedAlert } from '@/components/ThemedAlertProvider';
 import { getOrgPlatformAccountDb, deriveCompanyName } from '@/utils/database';
 import { validateEnrollmentPhotoQuality, PhotoQualityResult } from '@/utils/faceMatch';
-import { extractFaceVector } from '@/utils/faceEngine';
+import { extractFaceVector, detectFacesInImage, cropAndAlignFace } from '@/utils/faceEngine';
 import { formatLocalDate } from '@/utils/clockSync';
 
 const THEME_COLOR = '#FF6900';
@@ -140,12 +141,27 @@ export default function EnrolmentScreen() {
     if (cameraRef.current) {
       try {
         const photo = await cameraRef.current.takePictureAsync({
-          quality: 0.6,
+          quality: 0.8,
           skipProcessing: false,
           shutterSound: false,
         });
         if (photo && photo.uri) {
-          const quality = await validateEnrollmentPhotoQuality(photo.uri);
+          const faces = await detectFacesInImage(photo.uri);
+          if (faces.length === 0) {
+            ThemedAlert.alert(
+              'No Face Detected',
+              'Please position your face clearly in the camera frame with good lighting.',
+              [{ text: 'OK' }],
+              'warning'
+            );
+            return;
+          }
+
+          // Crop strictly to the human face, removing all background data
+          const { croppedUri } = await cropAndAlignFace(photo.uri, faces[0].boundingBox, faces[0].landmarks);
+          const finalPhotoUri = croppedUri || photo.uri;
+
+          const quality = await validateEnrollmentPhotoQuality(finalPhotoUri);
           setPhotoQuality(quality);
 
           if (!quality.isValid) {
@@ -157,7 +173,7 @@ export default function EnrolmentScreen() {
                 {
                   text: 'Use Anyway',
                   onPress: () => {
-                    setCapturedPhoto(photo.uri);
+                    setCapturedPhoto(finalPhotoUri);
                     setCameraVisible(false);
                   },
                 },
@@ -167,7 +183,7 @@ export default function EnrolmentScreen() {
             return;
           }
 
-          setCapturedPhoto(photo.uri);
+          setCapturedPhoto(finalPhotoUri);
           setCameraVisible(false);
           return;
         }
@@ -176,13 +192,20 @@ export default function EnrolmentScreen() {
           await new Promise((r) => setTimeout(r, 300));
           if (cameraRef.current) {
             const retryPhoto = await cameraRef.current.takePictureAsync({
-              quality: 0.5,
+              quality: 0.7,
               shutterSound: false,
             });
             if (retryPhoto && retryPhoto.uri) {
-              const retryQuality = await validateEnrollmentPhotoQuality(retryPhoto.uri);
+              const faces = await detectFacesInImage(retryPhoto.uri);
+              if (faces.length === 0) {
+                ThemedAlert.alert('No Face Detected', 'Please position your face clearly in the camera frame.', [{ text: 'OK' }], 'warning');
+                return;
+              }
+              const { croppedUri } = await cropAndAlignFace(retryPhoto.uri, faces[0].boundingBox, faces[0].landmarks);
+              const finalPhotoUri = croppedUri || retryPhoto.uri;
+              const retryQuality = await validateEnrollmentPhotoQuality(finalPhotoUri);
               setPhotoQuality(retryQuality);
-              setCapturedPhoto(retryPhoto.uri);
+              setCapturedPhoto(finalPhotoUri);
               setCameraVisible(false);
               return;
             }
@@ -706,9 +729,17 @@ export default function EnrolmentScreen() {
             renderItem={({ item }) => (
               <View style={styles.employeeCard}>
                 <View style={styles.cardHeaderRow}>
-                  <View style={styles.cardAvatarCircle}>
-                    <FontAwesome name="user" size={16} color="#FF6900" />
-                  </View>
+                  {item.photoUri ? (
+                    <Image
+                      source={{ uri: item.photoUri }}
+                      style={styles.cardAvatarPhoto}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View style={styles.cardAvatarCircle}>
+                      <FontAwesome name="user" size={16} color="#FF6900" />
+                    </View>
+                  )}
                   <View style={{ flex: 1, marginLeft: 10, overflow: 'hidden' }}>
                     <Text style={styles.cardEmpName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 6, flexWrap: 'wrap' }}>
@@ -1426,14 +1457,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cardAvatarCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     backgroundColor: '#FFF7ED',
     borderWidth: 1.5,
     borderColor: '#FFEDD5',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  cardAvatarPhoto: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    borderWidth: 2,
+    borderColor: '#FF6900',
   },
   cardEmpName: {
     fontSize: 15,
