@@ -13,6 +13,7 @@ import {
   Animated,
   Pressable,
   Image,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -27,8 +28,11 @@ import AppDateTimePicker from '@/components/AppDateTimePicker';
 import { ThemedAlert } from '@/components/ThemedAlertProvider';
 import { getOrgPlatformAccountDb, deriveCompanyName } from '@/utils/database';
 import { validateEnrollmentPhotoQuality, PhotoQualityResult } from '@/utils/faceMatch';
-import { extractFaceVector, detectFacesInImage, cropAndAlignFace } from '@/utils/faceEngine';
+import { extractFaceVector, detectFacesInImage, cropAndAlignFace, cropToCenteredSquarePhoto } from '@/utils/faceEngine';
 import { formatLocalDate } from '@/utils/clockSync';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const SQUARE_RETICLE_SIZE = Math.min(Math.round(SCREEN_WIDTH * 0.88), 350);
 
 const THEME_COLOR = '#FF6900';
 const THEME_COLOR_10_OPACITY = 'rgba(255, 105, 0, 0.1)';
@@ -81,6 +85,15 @@ export default function EnrolmentScreen() {
   const [cameraVisible, setCameraVisible] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [photoQuality, setPhotoQuality] = useState<PhotoQualityResult | null>(null);
+  const [previewEmployee, setPreviewEmployee] = useState<{
+    name: string;
+    employeeId: string;
+    department?: string;
+    photoUri: string | null;
+    joiningDate?: string;
+    phone?: string;
+    quality?: PhotoQualityResult | null;
+  } | null>(null);
 
   // Face detection overlay animation for Enrolment Camera
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -157,9 +170,18 @@ export default function EnrolmentScreen() {
             return;
           }
 
-          // Crop strictly to the human face, removing all background data
+          // Step 1: Crop & align biometric patch for embedding (112x112)
           const { croppedUri } = await cropAndAlignFace(photo.uri, faces[0].boundingBox, faces[0].landmarks);
           const finalPhotoUri = croppedUri || photo.uri;
+
+          // Step 2: Also produce a high-res 1:1 square centered avatar for display
+          const { squareUri } = await cropToCenteredSquarePhoto(
+            photo.uri,
+            undefined,
+            undefined,
+            faces[0].boundingBox
+          );
+          const displayPhotoUri = squareUri || finalPhotoUri;
 
           const quality = await validateEnrollmentPhotoQuality(finalPhotoUri);
           setPhotoQuality(quality);
@@ -173,7 +195,7 @@ export default function EnrolmentScreen() {
                 {
                   text: 'Use Anyway',
                   onPress: () => {
-                    setCapturedPhoto(finalPhotoUri);
+                    setCapturedPhoto(displayPhotoUri);
                     setCameraVisible(false);
                   },
                 },
@@ -183,7 +205,7 @@ export default function EnrolmentScreen() {
             return;
           }
 
-          setCapturedPhoto(finalPhotoUri);
+          setCapturedPhoto(displayPhotoUri);
           setCameraVisible(false);
           return;
         }
@@ -203,9 +225,16 @@ export default function EnrolmentScreen() {
               }
               const { croppedUri } = await cropAndAlignFace(retryPhoto.uri, faces[0].boundingBox, faces[0].landmarks);
               const finalPhotoUri = croppedUri || retryPhoto.uri;
+              const { squareUri: retrySquareUri } = await cropToCenteredSquarePhoto(
+                retryPhoto.uri,
+                undefined,
+                undefined,
+                faces[0].boundingBox
+              );
+              const retryDisplayUri = retrySquareUri || finalPhotoUri;
               const retryQuality = await validateEnrollmentPhotoQuality(finalPhotoUri);
               setPhotoQuality(retryQuality);
-              setCapturedPhoto(finalPhotoUri);
+              setCapturedPhoto(retryDisplayUri);
               setCameraVisible(false);
               return;
             }
@@ -729,20 +758,60 @@ export default function EnrolmentScreen() {
             renderItem={({ item }) => (
               <View style={styles.employeeCard}>
                 <View style={styles.cardHeaderRow}>
-                  {item.photoUri ? (
-                    <Image
-                      source={{ uri: item.photoUri }}
-                      style={styles.cardAvatarPhoto}
-                      resizeMode="cover"
-                    />
-                  ) : (
-                    <View style={styles.cardAvatarCircle}>
-                      <FontAwesome name="user" size={16} color="#FF6900" />
-                    </View>
-                  )}
-                  <View style={{ flex: 1, marginLeft: 10, overflow: 'hidden' }}>
-                    <Text style={styles.cardEmpName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 6, flexWrap: 'wrap' }}>
+                  {/* Face Avatar with Touch to Preview */}
+                  <TouchableOpacity
+                    style={styles.avatarTouchWrapper}
+                    activeOpacity={item.photoUri ? 0.75 : 0.85}
+                    onPress={() => {
+                      if (item.photoUri) {
+                        setPreviewEmployee({
+                          name: item.name,
+                          employeeId: item.employeeId,
+                          department: item.department,
+                          photoUri: item.photoUri,
+                          joiningDate: item.joiningDate,
+                          phone: item.phone,
+                        });
+                      } else {
+                        ThemedAlert.alert(
+                          'No Face Photo',
+                          `No biometric face registered for ${item.name}. Would you like to enroll one now?`,
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            { text: 'Add Face', onPress: () => handleOpenEditModal(item) },
+                          ],
+                          'info'
+                        );
+                      }
+                    }}
+                  >
+                    {item.photoUri ? (
+                      <View style={styles.avatarPhotoFrame}>
+                        <Image
+                          source={{ uri: item.photoUri }}
+                          style={styles.cardAvatarPhoto}
+                          resizeMode="cover"
+                        />
+                        <View style={styles.avatarPreviewBadge}>
+                          <MaterialCommunityIcons name="magnify" size={10} color="#FFFFFF" />
+                        </View>
+                      </View>
+                    ) : (
+                      <View style={styles.cardAvatarCircle}>
+                        <FontAwesome name="user" size={18} color="#FF6900" />
+                        <View style={styles.avatarAddBadge}>
+                          <FontAwesome name="plus" size={7} color="#FFFFFF" />
+                        </View>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+
+                  {/* Name and Badges */}
+                  <View style={styles.cardInfoContainer}>
+                    <Text style={styles.cardEmpName} numberOfLines={1} ellipsizeMode="tail">
+                      {item.name}
+                    </Text>
+                    <View style={styles.cardBadgesRow}>
                       <Text style={styles.cardEmpIdBadge} numberOfLines={1}>{item.employeeId}</Text>
                       <View style={styles.cardDeptBadge}>
                         <Text style={styles.cardDeptBadgeText} numberOfLines={1}>{item.department || 'General'}</Text>
@@ -752,6 +821,24 @@ export default function EnrolmentScreen() {
 
                   {/* Actions */}
                   <View style={styles.cardActionRow}>
+                    {item.photoUri ? (
+                      <TouchableOpacity
+                        style={styles.iconPreviewButton}
+                        onPress={() => {
+                          setPreviewEmployee({
+                            name: item.name,
+                            employeeId: item.employeeId,
+                            department: item.department,
+                            photoUri: item.photoUri,
+                            joiningDate: item.joiningDate,
+                            phone: item.phone,
+                          });
+                        }}
+                        accessibilityLabel="Preview Face Photo"
+                      >
+                        <MaterialCommunityIcons name="eye-outline" size={15} color="#059669" />
+                      </TouchableOpacity>
+                    ) : null}
                     <TouchableOpacity
                       style={styles.iconEditButton}
                       onPress={() => handleOpenEditModal(item)}
@@ -781,17 +868,46 @@ export default function EnrolmentScreen() {
                     </View>
                   )}
 
-                  <View style={[styles.faceMappedBadge, { backgroundColor: item.photoUri ? '#ECFDF5' : '#FFF7ED', borderColor: item.photoUri ? '#A7F3D0' : '#FED7AA' }]}>
+                  <TouchableOpacity
+                    activeOpacity={item.photoUri ? 0.7 : 0.85}
+                    onPress={() => {
+                      if (item.photoUri) {
+                        setPreviewEmployee({
+                          name: item.name,
+                          employeeId: item.employeeId,
+                          department: item.department,
+                          photoUri: item.photoUri,
+                          joiningDate: item.joiningDate,
+                          phone: item.phone,
+                        });
+                      } else {
+                        handleOpenEditModal(item);
+                      }
+                    }}
+                    style={[
+                      styles.faceMappedBadge,
+                      {
+                        backgroundColor: item.photoUri ? '#ECFDF5' : '#FFF7ED',
+                        borderColor: item.photoUri ? '#A7F3D0' : '#FED7AA',
+                      },
+                    ]}
+                  >
                     <MaterialCommunityIcons
                       name={item.photoUri ? 'face-recognition' : 'face-man-shimmer-outline'}
                       size={12}
                       color={item.photoUri ? '#059669' : '#C2410C'}
                       style={{ marginRight: 3 }}
                     />
-                    <Text style={[styles.faceMappedText, { color: item.photoUri ? '#059669' : '#C2410C' }]} numberOfLines={1}>
+                    <Text
+                      style={[styles.faceMappedText, { color: item.photoUri ? '#059669' : '#C2410C' }]}
+                      numberOfLines={1}
+                    >
                       {item.photoUri ? 'Face Mapped' : 'Pending Face'}
                     </Text>
-                  </View>
+                    {item.photoUri ? (
+                      <MaterialCommunityIcons name="chevron-right" size={11} color="#059669" style={{ marginLeft: 2 }} />
+                    ) : null}
+                  </TouchableOpacity>
                 </View>
               </View>
             )}
@@ -944,61 +1060,134 @@ export default function EnrolmentScreen() {
               </View>
 
               {/* Face Capture Section */}
-              <TouchableOpacity 
-                style={styles.faceCaptureButton} 
-                activeOpacity={0.8}
-                onPress={() => {
-                  if (!permission || !permission.granted) {
-                    requestPermission();
-                  }
-                  setCameraVisible(true);
-                }}
-              >
-                <FontAwesome name="camera" size={18} color={THEME_COLOR} style={{ marginRight: 8 }} />
-                <Text style={styles.faceCaptureText}>
-                  {capturedPhoto ? 'Retake Photo' : 'Capture Face (Biometric Mapping)'}
-                </Text>
-              </TouchableOpacity>
-
-              {capturedPhoto && (
-                <View style={{ marginTop: 10 }}>
-                  <View style={styles.successCaptureTag}>
-                    <MaterialCommunityIcons name="check-circle" size={16} color="#059669" style={{ marginRight: 6 }} />
-                    <Text style={styles.successCaptureText}>Face photo registered</Text>
-                  </View>
-                  {photoQuality && (
-                    <View
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        marginTop: 6,
-                        paddingHorizontal: 10,
-                        paddingVertical: 5,
-                        borderRadius: 8,
-                        backgroundColor: photoQuality.isValid ? '#ECFDF5' : '#FFFBEB',
-                        borderWidth: 1,
-                        borderColor: photoQuality.isValid ? '#A7F3D0' : '#FDE68A',
+              <View style={styles.modalFaceSection}>
+                <Text style={styles.label}>Biometric Face Photo</Text>
+                {capturedPhoto ? (
+                  <View style={styles.formFaceCard}>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        setPreviewEmployee({
+                          name: formData.name || 'New Employee',
+                          employeeId: formData.employeeId || 'BR-TMP',
+                          department: formData.department,
+                          photoUri: capturedPhoto,
+                          phone: formData.phone,
+                          quality: photoQuality,
+                        });
                       }}
+                      style={styles.formFaceThumbWrap}
                     >
-                      <MaterialCommunityIcons
-                        name={photoQuality.isValid ? 'shield-check' : 'alert-circle'}
-                        size={14}
-                        color={photoQuality.isValid ? '#059669' : '#D97706'}
-                        style={{ marginRight: 5 }}
+                      <Image
+                        source={{ uri: capturedPhoto }}
+                        style={styles.formFaceThumb}
+                        resizeMode="cover"
                       />
-                      <Text
-                        style={{
-                          fontSize: 11.5,
-                          fontWeight: '700',
-                          color: photoQuality.isValid ? '#065F46' : '#92400E',
-                        }}
-                      >
-                        Quality: {photoQuality.score}% · {photoQuality.feedback}
-                      </Text>
+                      <View style={styles.formFaceOverlay}>
+                        <MaterialCommunityIcons name="magnify-plus-outline" size={13} color="#FFFFFF" />
+                        <Text style={styles.formFaceOverlayText}>Preview</Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    <View style={styles.formFaceInfoCol}>
+                      <View style={styles.formFaceStatusPill}>
+                        <MaterialCommunityIcons name="check-circle" size={15} color="#059669" />
+                        <Text style={styles.formFaceStatusText}>Face Biometric Registered</Text>
+                      </View>
+
+                      {photoQuality && (
+                        <View
+                          style={[
+                            styles.formQualityPill,
+                            {
+                              backgroundColor: photoQuality.isValid ? '#ECFDF5' : '#FFFBEB',
+                              borderColor: photoQuality.isValid ? '#A7F3D0' : '#FDE68A',
+                            },
+                          ]}
+                        >
+                          <MaterialCommunityIcons
+                            name={photoQuality.isValid ? 'shield-check' : 'alert-circle'}
+                            size={12}
+                            color={photoQuality.isValid ? '#059669' : '#D97706'}
+                            style={{ marginRight: 4 }}
+                          />
+                          <Text
+                            style={[
+                              styles.formQualityText,
+                              { color: photoQuality.isValid ? '#065F46' : '#92400E' },
+                            ]}
+                          >
+                            Score: {photoQuality.score}% · {photoQuality.feedback}
+                          </Text>
+                        </View>
+                      )}
+
+                      <View style={styles.formFaceActionRow}>
+                        <TouchableOpacity
+                          style={styles.formFaceActionBtn}
+                          onPress={() => {
+                            setPreviewEmployee({
+                              name: formData.name || 'New Employee',
+                              employeeId: formData.employeeId || 'BR-TMP',
+                              department: formData.department,
+                              photoUri: capturedPhoto,
+                              phone: formData.phone,
+                              quality: photoQuality,
+                            });
+                          }}
+                        >
+                          <MaterialCommunityIcons name="eye-outline" size={13} color="#059669" />
+                          <Text style={[styles.formFaceActionText, { color: '#059669' }]}>Preview</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.formFaceActionBtn}
+                          onPress={() => {
+                            if (!permission || !permission.granted) {
+                              requestPermission();
+                            }
+                            setCameraVisible(true);
+                          }}
+                        >
+                          <FontAwesome name="camera" size={12} color={THEME_COLOR} />
+                          <Text style={styles.formFaceActionText}>Retake</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[styles.formFaceActionBtn, styles.formFaceRemoveBtn]}
+                          onPress={() => {
+                            setCapturedPhoto(null);
+                            setPhotoQuality(null);
+                          }}
+                        >
+                          <FontAwesome name="trash" size={12} color="#EF4444" />
+                          <Text style={[styles.formFaceActionText, { color: '#EF4444' }]}>Remove</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                  )}
-                </View>
-              )}
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.faceCaptureButton}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      if (!permission || !permission.granted) {
+                        requestPermission();
+                      }
+                      setCameraVisible(true);
+                    }}
+                  >
+                    <View style={styles.faceCaptureIconCircle}>
+                      <MaterialCommunityIcons name="face-recognition" size={24} color={THEME_COLOR} />
+                    </View>
+                    <View style={{ marginLeft: 12, flex: 1 }}>
+                      <Text style={styles.faceCaptureTitle}>Capture Face (Biometric Mapping)</Text>
+                      <Text style={styles.faceCaptureSubtitle}>Align face in camera for automated face vector detection</Text>
+                    </View>
+                    <FontAwesome name="chevron-right" size={12} color="#94A3B8" />
+                  </TouchableOpacity>
+                )}
+              </View>
 
               {/* Submit Button */}
               <TouchableOpacity style={styles.submitButton} onPress={handleEnrolment} activeOpacity={0.85}>
@@ -1039,6 +1228,7 @@ export default function EnrolmentScreen() {
             <CameraView
               style={StyleSheet.absoluteFillObject}
               facing="front"
+              mirror={true}
               mode="picture"
               animateShutter={false}
               ref={cameraRef}
@@ -1068,7 +1258,7 @@ export default function EnrolmentScreen() {
                 <View style={[styles.camCorner, styles.camCornerBL]} />
                 <View style={[styles.camCorner, styles.camCornerBR]} />
               </View>
-              <Text style={styles.reticleHintText}>Align face clearly within corners</Text>
+              <Text style={styles.reticleHintText}>Frame face in square (1:1 ratio)</Text>
             </View>
 
             {/* Footer with capture shutter button */}
@@ -1076,9 +1266,114 @@ export default function EnrolmentScreen() {
               <TouchableOpacity style={styles.captureButtonOuter} onPress={handleCapturePhoto} activeOpacity={0.8}>
                 <View style={styles.captureButtonInner} />
               </TouchableOpacity>
-              <Text style={styles.captureLabel}>TAP TO CAPTURE</Text>
+              <Text style={styles.captureLabel}>TAP TO CAPTURE SQUARE PHOTO</Text>
             </View>
           </SafeAreaView>
+        </View>
+      </Modal>
+
+      {/* ── Photo Preview Modal ── */}
+      <Modal
+        visible={previewEmployee !== null}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setPreviewEmployee(null)}
+      >
+        <View style={styles.previewBackdrop}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setPreviewEmployee(null)} />
+          <View style={styles.previewContainer}>
+            {/* Header */}
+            <View style={styles.previewHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.previewTitle} numberOfLines={1}>
+                  {previewEmployee?.name || 'Employee Photo'}
+                </Text>
+                <View style={styles.previewMetaRow}>
+                  <View style={styles.previewIdBadge}>
+                    <Text style={styles.previewIdText}>{previewEmployee?.employeeId}</Text>
+                  </View>
+                  {previewEmployee?.department ? (
+                    <View style={styles.previewDeptBadge}>
+                      <Text style={styles.previewDeptText}>{previewEmployee.department}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={styles.previewCloseBtn}
+                onPress={() => setPreviewEmployee(null)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <FontAwesome name="close" size={16} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Photo Box with Biometric Reticle Frame */}
+            <View style={styles.previewImageCard}>
+              {previewEmployee?.photoUri ? (
+                <Image
+                  source={{ uri: previewEmployee.photoUri }}
+                  style={styles.previewImage}
+                  resizeMode="cover"
+                />
+              ) : null}
+
+              {/* Biometric corner accents */}
+              <View style={[styles.cornerBracket, styles.cornerTL]} />
+              <View style={[styles.cornerBracket, styles.cornerTR]} />
+              <View style={[styles.cornerBracket, styles.cornerBL]} />
+              <View style={[styles.cornerBracket, styles.cornerBR]} />
+
+              {/* Biometric status chip */}
+              <View style={styles.previewStatusChip}>
+                <MaterialCommunityIcons name="shield-check" size={14} color="#10B981" />
+                <Text style={styles.previewStatusChipText}>Biometric Face Verified</Text>
+              </View>
+            </View>
+
+            {/* Details Footer */}
+            <View style={styles.previewFooterDetails}>
+              {previewEmployee?.phone ? (
+                <View style={styles.previewDetailItem}>
+                  <FontAwesome name="phone" size={12} color="#94A3B8" />
+                  <Text style={styles.previewDetailValue}>{previewEmployee.phone}</Text>
+                </View>
+              ) : null}
+              {previewEmployee?.joiningDate ? (
+                <View style={styles.previewDetailItem}>
+                  <FontAwesome name="calendar" size={12} color="#94A3B8" />
+                  <Text style={styles.previewDetailValue}>{previewEmployee.joiningDate}</Text>
+                </View>
+              ) : null}
+            </View>
+
+            {/* Action buttons */}
+            <View style={styles.previewActionsRow}>
+              <TouchableOpacity
+                style={styles.previewCloseActionBtn}
+                onPress={() => setPreviewEmployee(null)}
+              >
+                <Text style={styles.previewCloseActionText}>Close</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.previewEditActionBtn}
+                onPress={() => {
+                  const target = enrolledEmployees.find(
+                    (e) => e.employeeId === previewEmployee?.employeeId
+                  );
+                  setPreviewEmployee(null);
+                  if (target) {
+                    handleOpenEditModal(target);
+                  }
+                }}
+              >
+                <FontAwesome name="pencil" size={13} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.previewEditActionText}>Edit / Retake</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
       </Modal>
     </SafeAreaView>
@@ -1456,27 +1751,86 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  avatarTouchWrapper: {
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarPhotoFrame: {
+    width: 52,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    overflow: 'hidden',
+    position: 'relative',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  cardAvatarPhoto: {
+    width: '100%',
+    height: '100%',
+    alignSelf: 'center',
+  },
+  avatarPreviewBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#059669',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+    elevation: 3,
+  },
   cardAvatarCircle: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 52,
+    height: 52,
+    borderRadius: 16,
     backgroundColor: '#FFF7ED',
     borderWidth: 1.5,
     borderColor: '#FFEDD5',
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
   },
-  cardAvatarPhoto: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    borderWidth: 2,
-    borderColor: '#FF6900',
+  avatarAddBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: THEME_COLOR,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+    elevation: 2,
+  },
+  cardInfoContainer: {
+    flex: 1,
+    marginLeft: 12,
+    justifyContent: 'center',
   },
   cardEmpName: {
     fontSize: 15,
     fontWeight: '800',
     color: '#0F172A',
+  },
+  cardBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 3,
+    gap: 6,
+    flexWrap: 'wrap',
   },
   cardEmpIdBadge: {
     fontSize: 10,
@@ -1504,7 +1858,18 @@ const styles = StyleSheet.create({
   },
   cardActionRow: {
     flexDirection: 'row',
-    gap: 8,
+    alignItems: 'center',
+    gap: 7,
+  },
+  iconPreviewButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
   },
   iconEditButton: {
     width: 30,
@@ -1701,38 +2066,331 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontWeight: '600',
   },
+  modalFaceSection: {
+    marginVertical: 10,
+  },
+  formFaceCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginTop: 6,
+  },
+  formFaceThumbWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 14,
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: '#0F172A',
+    borderWidth: 1.5,
+    borderColor: THEME_COLOR,
+  },
+  formFaceThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  formFaceOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    paddingVertical: 3,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  formFaceOverlayText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  formFaceInfoCol: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  formFaceStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 4,
+  },
+  formFaceStatusText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  formQualityPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginBottom: 6,
+    borderWidth: 1,
+  },
+  formQualityText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+  },
+  formFaceActionRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 2,
+    flexWrap: 'wrap',
+  },
+  formFaceActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  formFaceActionText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME_COLOR,
+  },
+  formFaceRemoveBtn: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FEE2E2',
+  },
   faceCaptureButton: {
     flexDirection: 'row',
     backgroundColor: THEME_COLOR_10_OPACITY,
     borderWidth: 1.5,
     borderColor: THEME_COLOR,
     borderStyle: 'dashed',
-    borderRadius: 12,
+    borderRadius: 14,
     paddingVertical: 14,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  faceCaptureIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: 10,
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
   },
-  faceCaptureText: {
-    color: THEME_COLOR,
+  faceCaptureTitle: {
     fontSize: 13,
     fontWeight: '700',
+    color: '#0F172A',
   },
-  successCaptureTag: {
+  faceCaptureSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  previewBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  previewContainer: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#64748B',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  previewHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  previewTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: 0.2,
+  },
+  previewMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  previewIdBadge: {
+    backgroundColor: '#FFF7ED',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+  },
+  previewIdText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#EA580C',
+  },
+  previewDeptBadge: {
+    backgroundColor: '#F0F9FF',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E0F2FE',
+  },
+  previewDeptText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0284C7',
+  },
+  previewCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
     justifyContent: 'center',
+  },
+  previewImageCard: {
+    width: '100%',
+    aspectRatio: 1,
+    borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    overflow: 'hidden',
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+  },
+  previewImage: {
+    width: '100%',
+    height: '100%',
+  },
+  cornerBracket: {
+    position: 'absolute',
+    width: 18,
+    height: 18,
+    borderColor: '#FF6900',
+  },
+  cornerTL: {
+    top: 8,
+    left: 8,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
+    borderTopLeftRadius: 6,
+  },
+  cornerTR: {
+    top: 8,
+    right: 8,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+    borderTopRightRadius: 6,
+  },
+  cornerBL: {
+    bottom: 8,
+    left: 8,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
+    borderBottomLeftRadius: 6,
+  },
+  cornerBR: {
+    bottom: 8,
+    right: 8,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
+    borderBottomRightRadius: 6,
+  },
+  previewStatusChip: {
+    position: 'absolute',
+    bottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     backgroundColor: '#ECFDF5',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: '#A7F3D0',
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginBottom: 10,
   },
-  successCaptureText: {
-    fontSize: 12,
+  previewStatusChipText: {
+    fontSize: 11,
     fontWeight: '700',
     color: '#059669',
+  },
+  previewFooterDetails: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  previewDetailItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  previewDetailValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  previewActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+  },
+  previewCloseActionBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewCloseActionText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  previewEditActionBtn: {
+    flex: 1.3,
+    flexDirection: 'row',
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#FF6900',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewEditActionText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   submitButton: {
     backgroundColor: THEME_COLOR,
@@ -1795,31 +2453,33 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   reticleWrapper: {
+    ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
   },
   reticleBox: {
-    width: 220,
-    height: 250,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 105, 0, 0.4)',
+    width: SQUARE_RETICLE_SIZE,
+    height: SQUARE_RETICLE_SIZE,
+    borderRadius: 24,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
     overflow: 'hidden',
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
   },
   camCorner: {
     position: 'absolute',
-    width: 26,
-    height: 26,
-    borderColor: '#FF6900',
-    borderWidth: 3.5,
+    width: 38,
+    height: 38,
+    borderColor: '#FFFFFF',
+    borderWidth: 4.5,
   },
-  camCornerTL: { top: -2, left: -2, borderRightWidth: 0, borderBottomWidth: 0, borderTopLeftRadius: 10 },
-  camCornerTR: { top: -2, right: -2, borderLeftWidth: 0, borderBottomWidth: 0, borderTopRightRadius: 10 },
-  camCornerBL: { bottom: -2, left: -2, borderRightWidth: 0, borderTopWidth: 0, borderBottomLeftRadius: 10 },
-  camCornerBR: { bottom: -2, right: -2, borderLeftWidth: 0, borderTopWidth: 0, borderBottomRightRadius: 10 },
+  camCornerTL: { top: -2, left: -2, borderRightWidth: 0, borderBottomWidth: 0, borderTopLeftRadius: 22 },
+  camCornerTR: { top: -2, right: -2, borderLeftWidth: 0, borderBottomWidth: 0, borderTopRightRadius: 22 },
+  camCornerBL: { bottom: -2, left: -2, borderRightWidth: 0, borderTopWidth: 0, borderBottomLeftRadius: 22 },
+  camCornerBR: { bottom: -2, right: -2, borderLeftWidth: 0, borderTopWidth: 0, borderBottomRightRadius: 22 },
   scanningLaser: {
     position: 'absolute',
     width: '100%',

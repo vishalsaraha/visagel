@@ -16,6 +16,7 @@
  * 8. Temporal Confirmation Engine: Requires N consecutive consistent matching frames before attendance decision.
  */
 
+import { Image } from 'react-native';
 import * as ImageManipulator from 'expo-image-manipulator';
 import UPNG from 'upng-js';
 import base64Js from 'base64-js';
@@ -552,6 +553,117 @@ export async function cropAndAlignFace(
   } catch (err) {
     console.warn('[FaceEngine] Face crop error:', err);
     return { croppedUri: imageUri, base64: undefined };
+  }
+}
+
+/**
+ * Crops an image to a high-resolution 1:1 square centered on the human face
+ * (or centered on the full frame if no face bounding box is provided).
+ * Ensures balanced framing (ideal for official employee avatar / ID photo)
+ * and outputs a crisp 1:1 square image (e.g. 600x600 px).
+ */
+export async function cropToCenteredSquarePhoto(
+  imageUri: string,
+  imageWidth?: number,
+  imageHeight?: number,
+  faceBox?: FaceBoundingBox
+): Promise<{ squareUri: string; width: number; height: number }> {
+  try {
+    let imgW = imageWidth || 0;
+    let imgH = imageHeight || 0;
+
+    if (!imgW || !imgH) {
+      await new Promise<void>((resolve) => {
+        Image.getSize(
+          imageUri,
+          (w, h) => {
+            imgW = w;
+            imgH = h;
+            resolve();
+          },
+          () => {
+            imgW = 1080;
+            imgH = 1920;
+            resolve();
+          }
+        );
+      });
+    }
+
+    // Common 1:1 square ratio: square size based on smaller dimension
+    const minDim = Math.min(imgW, imgH);
+    let cropSize = minDim;
+    let originX = Math.round((imgW - cropSize) / 2);
+    let originY = Math.round((imgH - cropSize) / 2);
+
+    if (faceBox && faceBox.width > 0 && faceBox.height > 0) {
+      const facePixelCenterX = (faceBox.x + faceBox.width / 2) * imgW;
+      const facePixelCenterY = (faceBox.y + faceBox.height / 2) * imgH;
+      const facePixelWidth = faceBox.width * imgW;
+      const facePixelHeight = faceBox.height * imgH;
+      const maxFaceDim = Math.max(facePixelWidth, facePixelHeight);
+
+      // Frame the head comfortably: square size is ~2.0x face size, capped at minDim
+      // Leaving a comfortable margin so originX has room to center the face precisely
+      const desiredSquare = Math.round(
+        Math.min(minDim, Math.max(maxFaceDim * 2.0, minDim * 0.82))
+      );
+      cropSize = desiredSquare;
+
+      // Center the square horizontally on the face center (50% horizontal alignment)
+      originX = Math.round(facePixelCenterX - cropSize / 2);
+
+      // Vertically, position the face center slightly above mid-square (around 46%)
+      // so there is natural headroom for hair and comfortable collar/shoulders below
+      const targetFaceYRatio = 0.46;
+      originY = Math.round(facePixelCenterY - cropSize * targetFaceYRatio);
+
+      // Clamp within photo boundaries
+      if (originX < 0) originX = 0;
+      if (originY < 0) originY = 0;
+      if (originX + cropSize > imgW) originX = imgW - cropSize;
+      if (originY + cropSize > imgH) originY = imgH - cropSize;
+    } else {
+      // Default: Center-crop to 1:1 square
+      originX = Math.round((imgW - cropSize) / 2);
+      originY = Math.round((imgH - cropSize) / 2);
+    }
+
+    originX = Math.max(0, Math.min(imgW - 10, originX));
+    originY = Math.max(0, Math.min(imgH - 10, originY));
+    cropSize = Math.max(50, Math.min(imgW - originX, imgH - originY, cropSize));
+
+    // High resolution (1000px max) for ultra-clear crisp square avatar & preview
+    const targetOutputSize = Math.min(cropSize, 1000);
+
+    const manipResult = await ImageManipulator.manipulateAsync(
+      imageUri,
+      [
+        {
+          crop: {
+            originX,
+            originY,
+            width: cropSize,
+            height: cropSize,
+          },
+        },
+        {
+          resize: {
+            width: targetOutputSize,
+            height: targetOutputSize,
+          },
+        },
+      ],
+      {
+        compress: 0.95,
+        format: ImageManipulator.SaveFormat.JPEG,
+      }
+    );
+
+    return { squareUri: manipResult.uri, width: targetOutputSize, height: targetOutputSize };
+  } catch (err) {
+    console.warn('[FaceEngine] cropToCenteredSquarePhoto error:', err);
+    return { squareUri: imageUri, width: 400, height: 400 };
   }
 }
 

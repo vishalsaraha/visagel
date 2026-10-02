@@ -949,7 +949,7 @@ export default function AttendanceScreen() {
             {/* Avatar */}
             <View style={styles.resultAvatarCircle}>
               {lastScanned.photoUri ? (
-                <Image source={{ uri: lastScanned.photoUri }} style={styles.resultAvatarImage} />
+                <Image source={{ uri: lastScanned.photoUri }} style={styles.resultAvatarImage} resizeMode="cover" />
               ) : (
                 <FontAwesome name="user" size={24} color="#FF6900" />
               )}
@@ -1408,7 +1408,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     overflow: 'hidden',
   },
-  resultAvatarImage: { width: '100%', height: '100%', borderRadius: 24, resizeMode: 'cover' },
+  resultAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 0,
+  },
   resultAvatarCheck: {
     position: 'absolute',
     bottom: -2,
