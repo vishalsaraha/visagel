@@ -49,8 +49,6 @@ export default function AttendanceScreen() {
     getActiveShift,
     aiSettings,
     voiceFeedback,
-    groupScanMode,
-    saveGroupScanMode,
   } = useAttendance();
 
   const { clockInfo } = usePhoneClockSync();
@@ -509,11 +507,11 @@ export default function AttendanceScreen() {
         isLate: res.isLate,
       });
 
-      // Reset after showing verification card (1000ms for Group Scan, 3500ms for Normal)
+      // Reset after showing verification card (3000ms hold)
       if (verificationResetTimeoutRef.current) {
         clearTimeout(verificationResetTimeoutRef.current);
       }
-      const holdDuration = groupScanMode ? 1000 : 3500;
+      const holdDuration = 3000;
       verificationResetTimeoutRef.current = setTimeout(() => {
         setScanPhase('idle');
         setFaceConfidence(0);
@@ -525,7 +523,7 @@ export default function AttendanceScreen() {
         }
       }, holdDuration);
     },
-    [enrolledEmployees, attendanceRecords, autoAttendance, aiSettings, isFocused, isCameraReady, voiceFeedback, groupScanMode]
+    [enrolledEmployees, attendanceRecords, autoAttendance, aiSettings, isFocused, isCameraReady, voiceFeedback]
   );
 
   const runScanRef = useRef(runScan);
@@ -662,7 +660,7 @@ export default function AttendanceScreen() {
 
           <View style={styles.bannerDivider} />
 
-          {/* Row 2: Multi-punch badge · Group scan · Auto toggle */}
+          {/* Row 2: Multi-punch badge · Auto toggle */}
           <View style={styles.featuresRow}>
             <View style={styles.featureBadge}>
               <MaterialCommunityIcons
@@ -672,25 +670,9 @@ export default function AttendanceScreen() {
                 style={{ marginRight: 4 }}
               />
               <Text style={[styles.featureText, { color: multipleTimeEntries ? '#1E40AF' : '#475569' }]}>
-                {multipleTimeEntries ? 'Multi-Punch' : 'Single'}
+                {multipleTimeEntries ? 'Multi-Punch' : 'Single Punch'}
               </Text>
             </View>
-
-            <TouchableOpacity
-              style={[styles.groupScanTogglePill, groupScanMode && styles.groupScanTogglePillActive]}
-              onPress={() => saveGroupScanMode(!groupScanMode)}
-              activeOpacity={0.7}
-            >
-              <MaterialCommunityIcons
-                name="account-group"
-                size={13}
-                color={groupScanMode ? '#FFFFFF' : '#64748B'}
-                style={{ marginRight: 3 }}
-              />
-              <Text style={[styles.groupScanToggleText, groupScanMode && { color: '#FFFFFF' }]}>
-                Group {groupScanMode ? 'ON' : 'OFF'}
-              </Text>
-            </TouchableOpacity>
 
             <View style={styles.autoToggleContainer}>
               <Animated.View
@@ -702,6 +684,9 @@ export default function AttendanceScreen() {
                   },
                 ]}
               />
+              <Text style={styles.autoToggleLabel}>
+                {autoAttendance ? 'Auto Scan' : 'Manual'}
+              </Text>
               <Switch
                 value={autoAttendance}
                 onValueChange={setAutoAttendance}
@@ -1043,6 +1028,7 @@ export default function AttendanceScreen() {
           router.push('/screens/enrolment');
         }}
         verifyPassword={verifyPassword}
+        autoCloseSeconds={15}
       />
     </SafeAreaView>
   );

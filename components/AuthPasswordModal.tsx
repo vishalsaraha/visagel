@@ -1,15 +1,15 @@
-import React, { useState, useEffect } from 'react';
-import {
-  StyleSheet,
-  Text,
-  View,
-  Modal,
-  TouchableOpacity,
-  TextInput,
-  Vibration,
-} from 'react-native';
-import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import { AdminAccount } from '@/context/AuthContext';
+import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
+import React, { useEffect, useState } from 'react';
+import {
+    Modal,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    Vibration,
+    View,
+} from 'react-native';
 
 interface AuthPasswordModalProps {
   visible: boolean;
@@ -19,6 +19,7 @@ interface AuthPasswordModalProps {
   title?: string;
   subtitle?: string;
   badgeText?: string;
+  autoCloseSeconds?: number;
 }
 
 const THEME_COLOR = '#FF6900';
@@ -31,22 +32,50 @@ export default function AuthPasswordModal({
   title = 'HR Admin Login',
   subtitle = 'Enter HR ID & Password to unlock',
   badgeText = 'HR ACCESS LOCK',
+  autoCloseSeconds = 15,
 }: AuthPasswordModalProps) {
   const [loginIdOrEmail, setLoginIdOrEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [timeLeft, setTimeLeft] = useState<number>(autoCloseSeconds);
 
+  // Reset inputs and timer when modal opens
   useEffect(() => {
     if (visible) {
       setLoginIdOrEmail('');
       setPassword('');
       setErrorMessage('');
       setShowPassword(false);
+      setTimeLeft(autoCloseSeconds);
     }
-  }, [visible]);
+  }, [visible, autoCloseSeconds]);
+
+  // Inactivity auto-close timer: counts down every second when modal is visible
+  useEffect(() => {
+    if (!visible) return;
+
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          onClose();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [visible, onClose]);
+
+  // Reset inactivity timer on any interaction
+  const resetInactivityTimer = () => {
+    setTimeLeft(autoCloseSeconds);
+  };
 
   const handleLogin = () => {
+    resetInactivityTimer();
     if (!password) {
       setErrorMessage('Please enter password');
       return;
@@ -108,6 +137,7 @@ export default function AuthPasswordModal({
               placeholderTextColor="#94A3B8"
               value={loginIdOrEmail}
               onChangeText={(text) => {
+                resetInactivityTimer();
                 setLoginIdOrEmail(text);
                 setErrorMessage('');
               }}
@@ -127,6 +157,7 @@ export default function AuthPasswordModal({
               placeholderTextColor="#94A3B8"
               value={password}
               onChangeText={(text) => {
+                resetInactivityTimer();
                 setPassword(text);
                 setErrorMessage('');
               }}
@@ -137,7 +168,10 @@ export default function AuthPasswordModal({
               returnKeyType="done"
             />
             <TouchableOpacity
-              onPress={() => setShowPassword(!showPassword)}
+              onPress={() => {
+                resetInactivityTimer();
+                setShowPassword(!showPassword);
+              }}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <MaterialCommunityIcons
@@ -155,6 +189,14 @@ export default function AuthPasswordModal({
             ) : (
               <Text style={styles.hintText}>Default: admin / admin</Text>
             )}
+          </View>
+
+          {/* Inactivity Auto-Close Badge */}
+          <View style={styles.autoClosePill}>
+            <MaterialCommunityIcons name="timer-outline" size={12} color="#94A3B8" style={{ marginRight: 4 }} />
+            <Text style={styles.autoCloseText}>
+              Auto-closes in <Text style={{ fontWeight: '700', color: THEME_COLOR }}>{timeLeft}s</Text> if inactive
+            </Text>
           </View>
 
           {/* Action Buttons */}
@@ -299,6 +341,22 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '500',
     color: '#94A3B8',
+  },
+  autoClosePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginBottom: 10,
+  },
+  autoCloseText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '500',
   },
   actionRow: {
     flexDirection: 'row',

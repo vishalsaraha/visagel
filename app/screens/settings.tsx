@@ -1,30 +1,29 @@
-import React, { useState } from 'react';
-import {
-  StyleSheet,
-  Text,
-  View,
-  ScrollView,
-  StatusBar,
-  Switch,
-  TouchableOpacity,
-  Alert,
-  Modal,
-  Linking,
-  TextInput,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { useAuth } from '@/context/AuthContext';
-import { useAttendance, ShiftEntry, CustomField } from '@/context/AttendanceContext';
-import { extractFaceVector, computeCosineSimilarity } from '@/utils/faceEngine';
-import { ThemedAlert } from '@/components/ThemedAlertProvider';
-import * as MailComposer from 'expo-mail-composer';
-import * as FileSystem from 'expo-file-system/legacy';
 import AppDateTimePicker from '@/components/AppDateTimePicker';
 import OrgLoginModal from '@/components/OrgLoginModal';
-import { getOrgPlatformAccountDb, saveOrgPlatformAccountDb, logoutOrgPlatformAccountDb, deriveCompanyName, OrgPlatformAccount, getKeyValue, setKeyValue } from '@/utils/database';
+import { ThemedAlert } from '@/components/ThemedAlertProvider';
+import { CustomField, ShiftEntry, useAttendance } from '@/context/AttendanceContext';
+import { useAuth } from '@/context/AuthContext';
 import { formatLocalDate } from '@/utils/clockSync';
+import { deriveCompanyName, getKeyValue, getOrgPlatformAccountDb, logoutOrgPlatformAccountDb, OrgPlatformAccount, setKeyValue } from '@/utils/database';
+import { computeCosineSimilarity, extractFaceVector } from '@/utils/faceEngine';
+import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as MailComposer from 'expo-mail-composer';
+import { useRouter } from 'expo-router';
+import React, { useState } from 'react';
+import {
+  Linking,
+  Modal,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const THEME_COLOR = '#FF6900';
 const THEME_COLOR_10_OPACITY = 'rgba(255, 105, 0, 0.1)';
@@ -53,11 +52,9 @@ function makeTime(h: number, m: number): Date {
 export default function SettingsScreen() {
   const router = useRouter();
   const {
-    adminPassword,
     adminAccounts,
     addAdminAccount,
     removeAdminAccount,
-    updateAdminAccount,
     logout,
     currentUser,
   } = useAuth();

@@ -1,28 +1,27 @@
-import React, { useState } from 'react';
+import AppDateTimePicker from '@/components/AppDateTimePicker';
+import { ThemedAlert } from '@/components/ThemedAlertProvider';
+import { EmployeeAttendance, useAttendance } from '@/context/AttendanceContext';
+import { useAuth } from '@/context/AuthContext';
+import { formatLocalDate } from '@/utils/clockSync';
+import { deriveCompanyName, getKeyValue, getOrgPlatformAccountDb } from '@/utils/database';
+import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Calendar from 'expo-calendar';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as MailComposer from 'expo-mail-composer';
+import { useRouter } from 'expo-router';
+import * as Sharing from 'expo-sharing';
+import React, { useMemo, useState } from 'react';
 import {
-  StyleSheet,
-  Text,
-  View,
+  Modal,
   ScrollView,
   StatusBar,
-  TouchableOpacity,
-  Alert,
-  Modal,
+  StyleSheet,
+  Text,
   TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { useAuth } from '@/context/AuthContext';
-import { useAttendance, EmployeeAttendance } from '@/context/AttendanceContext';
-import { ThemedAlert } from '@/components/ThemedAlertProvider';
-import { getOrgPlatformAccountDb, deriveCompanyName, getKeyValue } from '@/utils/database';
-import { formatLocalDate } from '@/utils/clockSync';
-import * as Calendar from 'expo-calendar';
-import * as Sharing from 'expo-sharing';
-import * as MailComposer from 'expo-mail-composer';
-import * as FileSystem from 'expo-file-system/legacy';
-import AppDateTimePicker from '@/components/AppDateTimePicker';
 
 const THEME_COLOR = '#FF6900';
 
@@ -32,7 +31,6 @@ export default function DashboardScreen() {
   const {
     attendanceRecords,
     multipleTimeEntries,
-    recordPunch,
     removePunch,
     departments,
     enrolledEmployees,
@@ -66,6 +64,10 @@ export default function DashboardScreen() {
     setSelectedPunchType('All');
     setSortBy('name');
   };
+
+  // Folder view state
+  const [viewMode, setViewMode] = useState<'folders' | 'list'>('folders');
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
 
   const selectedDateStr = formatLocalDate(date);
   const dayRecords = attendanceRecords.filter((r) => r.date === selectedDateStr);
@@ -144,6 +146,45 @@ export default function DashboardScreen() {
     onLeaveToday,
     totalEnrolled: enrolledEmployees.length,
     absentToday: absentCount,
+  };
+
+  // Group filtered records into department folders
+  const departmentFolders = useMemo(() => {
+    const allDepts = Array.from(new Set([
+      ...departments,
+      ...dayRecords.map((r) => r.department || 'General'),
+    ])).filter(Boolean);
+
+    const targetDepts = selectedDept === 'All' ? allDepts : [selectedDept];
+    return targetDepts
+      .map((dept) => {
+        const items = filteredRecords.filter((r) => (r.department || 'General') === dept);
+        const lateCount = items.filter((r) => r.status === 'LATE').length;
+        const presentCount = items.filter((r) => r.status === 'PRESENT').length;
+        return { department: dept, items, lateCount, presentCount };
+      })
+      .filter((f) => f.items.length > 0);
+  }, [filteredRecords, departments, dayRecords, selectedDept]);
+
+  const isFolderExpanded = (dept: string) => {
+    if (searchQuery.trim().length > 0) return true;
+    return expandedFolders[dept] !== false;
+  };
+
+  const toggleFolder = (dept: string) => {
+    setExpandedFolders((prev) => ({ ...prev, [dept]: prev[dept] === false ? true : false }));
+  };
+
+  const expandAllFolders = () => {
+    const next: Record<string, boolean> = {};
+    departmentFolders.forEach((f) => { next[f.department] = true; });
+    setExpandedFolders(next);
+  };
+
+  const collapseAllFolders = () => {
+    const next: Record<string, boolean> = {};
+    departmentFolders.forEach((f) => { next[f.department] = false; });
+    setExpandedFolders(next);
   };
 
   const handleDeletePunch = (employeeId: string, date: string, punchId: string, punchTime: string) => {
@@ -671,6 +712,7 @@ export default function DashboardScreen() {
         </View>
 
 
+
         {/* Daily Attendance Report Section */}
         <View style={styles.reportSectionHeader}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -690,6 +732,51 @@ export default function DashboardScreen() {
           </View>
         </View>
 
+        {/* View Mode + Expand/Collapse Controls */}
+        <View style={styles.listHeaderRow}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            {viewMode === 'folders' && departmentFolders.length > 1 && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <TouchableOpacity onPress={expandAllFolders} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                  <Text style={styles.folderActionLink}>Expand All</Text>
+                </TouchableOpacity>
+                <Text style={{ color: '#CBD5E1', fontSize: 10 }}>·</Text>
+                <TouchableOpacity onPress={collapseAllFolders} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                  <Text style={styles.folderActionLink}>Collapse All</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+          <View style={styles.viewModeSwitcher}>
+            <TouchableOpacity
+              style={[styles.viewModeBtn, viewMode === 'folders' && styles.viewModeBtnActive]}
+              onPress={() => setViewMode('folders')}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons
+                name="folder-outline"
+                size={13}
+                color={viewMode === 'folders' ? '#FFFFFF' : '#64748B'}
+                style={{ marginRight: 3 }}
+              />
+              <Text style={[styles.viewModeText, viewMode === 'folders' && styles.viewModeTextActive]}>Folders</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.viewModeBtn, viewMode === 'list' && styles.viewModeBtnActive]}
+              onPress={() => setViewMode('list')}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons
+                name="view-list"
+                size={13}
+                color={viewMode === 'list' ? '#FFFFFF' : '#64748B'}
+                style={{ marginRight: 3 }}
+              />
+              <Text style={[styles.viewModeText, viewMode === 'list' && styles.viewModeTextActive]}>List</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {filteredRecords.length === 0 ? (
           <View style={styles.emptyCard}>
             <MaterialCommunityIcons name="clipboard-text-off-outline" size={36} color="#CBD5E1" style={{ marginBottom: 8 }} />
@@ -702,54 +789,123 @@ export default function DashboardScreen() {
                 : 'Try adjusting the search or department filter'}
             </Text>
           </View>
+        ) : viewMode === 'folders' ? (
+          <View style={styles.cardsList}>
+            {departmentFolders.map((folder) => (
+              <View key={folder.department} style={styles.deptFolderCard}>
+                <TouchableOpacity
+                  style={styles.deptFolderHeader}
+                  onPress={() => toggleFolder(folder.department)}
+                  activeOpacity={0.75}
+                >
+                  <View style={styles.deptFolderIconWrap}>
+                    <MaterialCommunityIcons name="folder" size={18} color={THEME_COLOR} />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.deptFolderName}>{folder.department}</Text>
+                    <Text style={styles.deptFolderMeta}>
+                      {folder.items.length} present{folder.lateCount > 0 ? ` · ${folder.lateCount} late` : ''}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={[styles.deptFolderStatPill, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
+                      <Text style={[styles.deptFolderStatText, { color: '#059669' }]}>{folder.presentCount}</Text>
+                    </View>
+                    {folder.lateCount > 0 && (
+                      <View style={[styles.deptFolderStatPill, { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' }]}>
+                        <Text style={[styles.deptFolderStatText, { color: '#D97706' }]}>{folder.lateCount} late</Text>
+                      </View>
+                    )}
+                    <MaterialCommunityIcons
+                      name={isFolderExpanded(folder.department) ? 'chevron-up' : 'chevron-down'}
+                      size={16}
+                      color="#94A3B8"
+                    />
+                  </View>
+                </TouchableOpacity>
+                {isFolderExpanded(folder.department) && (
+                  <View style={styles.deptFolderItems}>
+                    {folder.items.map((item) => {
+                      const firstIn = item.punches.find((p) => p.type === 'IN')?.time || '--:--';
+                      const lastOut = [...item.punches].reverse().find((p) => p.type === 'OUT')?.time || '--:--';
+                      return (
+                        <TouchableOpacity key={item.id} style={styles.recordCard} activeOpacity={0.8} onPress={() => setSelectedEmpPunches(item)}>
+                          <View style={styles.cardTopRow}>
+                            <View style={styles.avatarCircle}><FontAwesome name="user" size={16} color="#FF6900" /></View>
+                            <View style={{ flex: 1, marginLeft: 10, overflow: 'hidden' }}>
+                              <Text style={styles.empNameText} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
+                              <Text style={styles.empIdText} numberOfLines={1}>{item.employeeId}</Text>
+                            </View>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                              {item.status === 'LATE' && <View style={styles.statusBadgeLate}><Text style={styles.statusBadgeLateText}>LATE</Text></View>}
+                              {item.status === 'HALF_DAY' && <View style={styles.statusBadgeHalfDay}><Text style={styles.statusBadgeHalfDayText}>HALF DAY</Text></View>}
+                              {item.status === 'PRESENT' && <View style={styles.statusBadgePresent}><Text style={styles.statusBadgePresentText}>PRESENT</Text></View>}
+                              <View style={styles.punchCountBadge}>
+                                <MaterialCommunityIcons name="gesture-tap" size={11} color="#2563EB" style={{ marginRight: 3 }} />
+                                <Text style={styles.punchCountBadgeText} numberOfLines={1}>{item.punches.length} {item.punches.length === 1 ? 'Punch' : 'Punches'}</Text>
+                              </View>
+                            </View>
+                          </View>
+                          <View style={styles.timingRow}>
+                            <View style={styles.timePillIn}>
+                              <MaterialCommunityIcons name="login" size={13} color="#059669" style={{ marginRight: 5 }} />
+                              <View style={{ flex: 1, overflow: 'hidden' }}>
+                                <Text style={styles.timePillLabelIn} numberOfLines={1}>TIME IN</Text>
+                                <Text style={styles.timePillValueIn} numberOfLines={1} adjustsFontSizeToFit>{firstIn}</Text>
+                              </View>
+                            </View>
+                            <View style={styles.timePillOut}>
+                              <MaterialCommunityIcons name="logout" size={13} color="#C2410C" style={{ marginRight: 5 }} />
+                              <View style={{ flex: 1, overflow: 'hidden' }}>
+                                <Text style={styles.timePillLabelOut} numberOfLines={1}>TIME OUT</Text>
+                                <Text style={styles.timePillValueOut} numberOfLines={1} adjustsFontSizeToFit>{lastOut}</Text>
+                              </View>
+                            </View>
+                            {item.totalWorkingHours && (
+                              <View style={[styles.timePillOut, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}>
+                                <MaterialCommunityIcons name="timer-outline" size={13} color="#059669" style={{ marginRight: 5 }} />
+                                <View style={{ flex: 1, overflow: 'hidden' }}>
+                                  <Text style={[styles.timePillLabelOut, { color: '#059669' }]} numberOfLines={1}>HOURS</Text>
+                                  <Text style={[styles.timePillValueOut, { color: '#166534' }]} numberOfLines={1} adjustsFontSizeToFit>{item.totalWorkingHours}</Text>
+                                </View>
+                              </View>
+                            )}
+                            <TouchableOpacity style={styles.historyPillBtn} onPress={(e) => { e.stopPropagation(); setSelectedEmpForHistory(item); }} activeOpacity={0.75}>
+                              <MaterialCommunityIcons name="history" size={13} color="#2563EB" style={{ marginRight: 3 }} />
+                              <Text style={styles.historyPillBtnText}>30D</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            ))}
+          </View>
         ) : (
           <View style={styles.cardsList}>
-            {filteredRecords.map((item, index) => {
+            {filteredRecords.map((item) => {
               const firstIn = item.punches.find((p) => p.type === 'IN')?.time || '--:--';
               const lastOut = [...item.punches].reverse().find((p) => p.type === 'OUT')?.time || '--:--';
-
               return (
-                <TouchableOpacity
-                  key={item.id}
-                  style={styles.recordCard}
-                  activeOpacity={0.8}
-                  onPress={() => setSelectedEmpPunches(item)}
-                >
-                  {/* Top row: Avatar + Name + Punch count badge */}
+                <TouchableOpacity key={item.id} style={styles.recordCard} activeOpacity={0.8} onPress={() => setSelectedEmpPunches(item)}>
                   <View style={styles.cardTopRow}>
-                    <View style={styles.avatarCircle}>
-                      <FontAwesome name="user" size={16} color="#FF6900" />
-                    </View>
+                    <View style={styles.avatarCircle}><FontAwesome name="user" size={16} color="#FF6900" /></View>
                     <View style={{ flex: 1, marginLeft: 10, overflow: 'hidden' }}>
                       <Text style={styles.empNameText} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
                       <Text style={styles.empIdText} numberOfLines={1}>{item.employeeId}</Text>
                     </View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                      {item.status === 'LATE' && (
-                        <View style={styles.statusBadgeLate}>
-                          <Text style={styles.statusBadgeLateText}>LATE</Text>
-                        </View>
-                      )}
-                      {item.status === 'HALF_DAY' && (
-                        <View style={styles.statusBadgeHalfDay}>
-                          <Text style={styles.statusBadgeHalfDayText}>HALF DAY</Text>
-                        </View>
-                      )}
-                      {item.status === 'PRESENT' && (
-                        <View style={styles.statusBadgePresent}>
-                          <Text style={styles.statusBadgePresentText}>PRESENT</Text>
-                        </View>
-                      )}
+                      {item.status === 'LATE' && <View style={styles.statusBadgeLate}><Text style={styles.statusBadgeLateText}>LATE</Text></View>}
+                      {item.status === 'HALF_DAY' && <View style={styles.statusBadgeHalfDay}><Text style={styles.statusBadgeHalfDayText}>HALF DAY</Text></View>}
+                      {item.status === 'PRESENT' && <View style={styles.statusBadgePresent}><Text style={styles.statusBadgePresentText}>PRESENT</Text></View>}
                       <View style={styles.punchCountBadge}>
                         <MaterialCommunityIcons name="gesture-tap" size={11} color="#2563EB" style={{ marginRight: 3 }} />
-                        <Text style={styles.punchCountBadgeText} numberOfLines={1}>
-                          {item.punches.length} {item.punches.length === 1 ? 'Punch' : 'Punches'}
-                        </Text>
+                        <Text style={styles.punchCountBadgeText} numberOfLines={1}>{item.punches.length} {item.punches.length === 1 ? 'Punch' : 'Punches'}</Text>
                       </View>
                     </View>
                   </View>
-
-                  {/* Bottom row: Time In & Time Out Pills + Working Hours */}
                   <View style={styles.timingRow}>
                     <View style={styles.timePillIn}>
                       <MaterialCommunityIcons name="login" size={13} color="#059669" style={{ marginRight: 5 }} />
@@ -758,7 +914,6 @@ export default function DashboardScreen() {
                         <Text style={styles.timePillValueIn} numberOfLines={1} adjustsFontSizeToFit>{firstIn}</Text>
                       </View>
                     </View>
-
                     <View style={styles.timePillOut}>
                       <MaterialCommunityIcons name="logout" size={13} color="#C2410C" style={{ marginRight: 5 }} />
                       <View style={{ flex: 1, overflow: 'hidden' }}>
@@ -766,7 +921,6 @@ export default function DashboardScreen() {
                         <Text style={styles.timePillValueOut} numberOfLines={1} adjustsFontSizeToFit>{lastOut}</Text>
                       </View>
                     </View>
-
                     {item.totalWorkingHours && (
                       <View style={[styles.timePillOut, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}>
                         <MaterialCommunityIcons name="timer-outline" size={13} color="#059669" style={{ marginRight: 5 }} />
@@ -776,15 +930,7 @@ export default function DashboardScreen() {
                         </View>
                       </View>
                     )}
-
-                    <TouchableOpacity
-                      style={styles.historyPillBtn}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        setSelectedEmpForHistory(item);
-                      }}
-                      activeOpacity={0.75}
-                    >
+                    <TouchableOpacity style={styles.historyPillBtn} onPress={(e) => { e.stopPropagation(); setSelectedEmpForHistory(item); }} activeOpacity={0.75}>
                       <MaterialCommunityIcons name="history" size={13} color="#2563EB" style={{ marginRight: 3 }} />
                       <Text style={styles.historyPillBtnText}>30D</Text>
                     </TouchableOpacity>
@@ -794,6 +940,7 @@ export default function DashboardScreen() {
             })}
           </View>
         )}
+      
       </ScrollView>
 
       {/* Detail Multi-Punch Timeline Modal */}
@@ -1140,7 +1287,7 @@ export default function DashboardScreen() {
                       <Text style={styles.leaveItemDates}>
                         📅 {l.startDate} → {l.endDate} · <Text style={{ fontWeight: '800', color: '#7C3AED' }}>{l.type}</Text>
                       </Text>
-                      {l.reason ? <Text style={styles.leaveItemReason}>"{l.reason}"</Text> : null}
+                      {l.reason ? <Text style={styles.leaveItemReason}>{`"${l.reason}"`}</Text> : null}
                     </View>
                     <TouchableOpacity
                       style={styles.deleteLeaveBtn}
@@ -1362,6 +1509,96 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     color: '#FF6900',
+  },
+  listHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 12,
+  },
+  folderActionLink: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FF6900',
+  },
+  viewModeSwitcher: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    padding: 3,
+  },
+  viewModeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  viewModeBtnActive: {
+    backgroundColor: '#FF6900',
+  },
+  viewModeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  viewModeTextActive: {
+    color: '#FFFFFF',
+  },
+  deptFolderCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    overflow: 'hidden',
+  },
+  deptFolderHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: '#FFF7ED',
+  },
+  deptFolderIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+  },
+  deptFolderName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  deptFolderMeta: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  deptFolderStatPill: {
+    minWidth: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  deptFolderStatText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+  },
+  deptFolderItems: {
+    padding: 10,
+    gap: 8,
   },
   punchModeTag: {
     flexDirection: 'row',
@@ -2045,4 +2282,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginLeft: 8,
   },
-});
+});

@@ -1,35 +1,34 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  StyleSheet,
-  Text,
-  View,
-  TextInput,
-  TouchableOpacity,
-  ScrollView,
-  StatusBar,
-  Alert,
-  Modal,
-  FlatList,
-  Animated,
-  Pressable,
-  Image,
-  Dimensions,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import { useRouter } from 'expo-router';
-import { useAuth } from '@/context/AuthContext';
-import { useAttendance, EnrolledEmployee } from '@/context/AttendanceContext';
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
-import * as MailComposer from 'expo-mail-composer';
 import AppDateTimePicker from '@/components/AppDateTimePicker';
 import { ThemedAlert } from '@/components/ThemedAlertProvider';
-import { getOrgPlatformAccountDb, deriveCompanyName } from '@/utils/database';
-import { validateEnrollmentPhotoQuality, PhotoQualityResult } from '@/utils/faceMatch';
-import { extractFaceVector, detectFacesInImage, cropAndAlignFace, cropToCenteredSquarePhoto } from '@/utils/faceEngine';
+import { EnrolledEmployee, useAttendance } from '@/context/AttendanceContext';
+import { useAuth } from '@/context/AuthContext';
 import { formatLocalDate } from '@/utils/clockSync';
+import { deriveCompanyName, getOrgPlatformAccountDb } from '@/utils/database';
+import { cropAndAlignFace, cropToCenteredSquarePhoto, detectFacesInImage, extractFaceVector } from '@/utils/faceEngine';
+import { PhotoQualityResult, validateEnrollmentPhotoQuality } from '@/utils/faceMatch';
+import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as MailComposer from 'expo-mail-composer';
+import { useRouter } from 'expo-router';
+import * as Sharing from 'expo-sharing';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+    Animated,
+    Dimensions,
+    FlatList,
+    Image,
+    Modal,
+    Pressable,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SQUARE_RETICLE_SIZE = Math.min(Math.round(SCREEN_WIDTH * 0.88), 350);
@@ -64,6 +63,8 @@ export default function EnrolmentScreen() {
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'folders' | 'list'>('folders');
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
 
   const hasActiveFilters = selectedDept !== 'All' || faceStatusFilter !== 'All' || sortBy !== 'name';
   const activeFilterCount = (selectedDept !== 'All' ? 1 : 0) + (faceStatusFilter !== 'All' ? 1 : 0) + (sortBy !== 'name' ? 1 : 0);
@@ -246,18 +247,19 @@ export default function EnrolmentScreen() {
     }
   };
 
-  const handleOpenAddModal = () => {
+  const handleOpenAddModal = (dept?: string) => {
     setEditingId(null);
+    const targetDept = typeof dept === 'string' ? dept : selectedDept === 'All' ? (contextDepts[0] || 'Engineering') : selectedDept;
     setFormData({
       employeeId: `BR-0${(26 + enrolledEmployees.length + 1).toString().padStart(2, '0')}`,
       name: '',
-      department: selectedDept === 'All' ? (contextDepts[0] || 'Engineering') : selectedDept,
+      department: targetDept,
       phone: '',
       joiningDate: new Date(),
     });
     setCapturedPhoto(null);
     setModalVisible(true);
-    toggleDock();
+    if (isDockOpen) toggleDock();
   };
 
   const handleOpenEditModal = (item: EnrolledEmployee) => {
@@ -457,6 +459,61 @@ export default function EnrolmentScreen() {
       return 0;
     });
 
+  // Group filtered employees into Department Folders
+  const departmentFolders = useMemo(() => {
+    const allDepts = Array.from(
+      new Set([
+        ...contextDepts,
+        ...enrolledEmployees.map((e) => e.department || 'General'),
+      ])
+    ).filter(Boolean);
+
+    const targetDepts = selectedDept === 'All' ? allDepts : [selectedDept];
+
+    return targetDepts
+      .map((dept) => {
+        const items = filteredList.filter((e) => (e.department || 'General') === dept);
+        const totalStaff = enrolledEmployees.filter((e) => (e.department || 'General') === dept).length;
+        const mappedCount = items.filter((e) => Boolean(e.photoUri)).length;
+        return {
+          department: dept,
+          items,
+          totalStaff,
+          mappedCount,
+        };
+      })
+      .filter((folder) => {
+        if (searchQuery.trim() || faceStatusFilter !== 'All') {
+          return folder.items.length > 0;
+        }
+        return folder.items.length > 0 || folder.totalStaff > 0;
+      });
+  }, [filteredList, contextDepts, enrolledEmployees, selectedDept, searchQuery, faceStatusFilter]);
+
+  const isFolderExpanded = (dept: string) => {
+    if (searchQuery.trim().length > 0) return true;
+    return expandedFolders[dept] !== false;
+  };
+
+  const toggleFolder = (dept: string) => {
+    setExpandedFolders((prev) => ({
+      ...prev,
+      [dept]: prev[dept] === false ? true : false,
+    }));
+  };
+
+  const expandAllFolders = () => {
+    const next: Record<string, boolean> = {};
+    departmentFolders.forEach((f) => { next[f.department] = true; });
+    setExpandedFolders(next);
+  };
+
+  const collapseAllFolders = () => {
+    const next: Record<string, boolean> = {};
+    departmentFolders.forEach((f) => { next[f.department] = false; });
+    setExpandedFolders(next);
+  };
+
   const addTranslateY = animationValue.interpolate({
     inputRange: [0, 1],
     outputRange: [0, -198],
@@ -476,6 +533,163 @@ export default function EnrolmentScreen() {
     inputRange: [0, 1],
     outputRange: ['0deg', '45deg'],
   });
+
+  const renderEmployeeCard = (item: EnrolledEmployee) => (
+    <View style={styles.employeeCard}>
+      <View style={styles.cardHeaderRow}>
+        {/* Face Avatar with Touch to Preview */}
+        <TouchableOpacity
+          style={styles.avatarTouchWrapper}
+          activeOpacity={item.photoUri ? 0.75 : 0.85}
+          onPress={() => {
+            if (item.photoUri) {
+              setPreviewEmployee({
+                name: item.name,
+                employeeId: item.employeeId,
+                department: item.department,
+                photoUri: item.photoUri,
+                joiningDate: item.joiningDate,
+                phone: item.phone,
+              });
+            } else {
+              ThemedAlert.alert(
+                'No Face Photo',
+                `No biometric face registered for ${item.name}. Would you like to enroll one now?`,
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Add Face', onPress: () => handleOpenEditModal(item) },
+                ],
+                'info'
+              );
+            }
+          }}
+        >
+          {item.photoUri ? (
+            <View style={styles.avatarPhotoFrame}>
+              <Image
+                source={{ uri: item.photoUri }}
+                style={styles.cardAvatarPhoto}
+                resizeMode="cover"
+              />
+              <View style={styles.avatarPreviewBadge}>
+                <MaterialCommunityIcons name="magnify" size={10} color="#FFFFFF" />
+              </View>
+            </View>
+          ) : (
+            <View style={styles.cardAvatarCircle}>
+              <FontAwesome name="user" size={18} color="#FF6900" />
+              <View style={styles.avatarAddBadge}>
+                <FontAwesome name="plus" size={7} color="#FFFFFF" />
+              </View>
+            </View>
+          )}
+        </TouchableOpacity>
+
+        {/* Name and Badges */}
+        <View style={styles.cardInfoContainer}>
+          <Text style={styles.cardEmpName} numberOfLines={1} ellipsizeMode="tail">
+            {item.name}
+          </Text>
+          <View style={styles.cardBadgesRow}>
+            <Text style={styles.cardEmpIdBadge} numberOfLines={1}>{item.employeeId}</Text>
+            <View style={styles.cardDeptBadge}>
+              <Text style={styles.cardDeptBadgeText} numberOfLines={1}>{item.department || 'General'}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Actions */}
+        <View style={styles.cardActionRow}>
+          {item.photoUri ? (
+            <TouchableOpacity
+              style={styles.iconPreviewButton}
+              onPress={() => {
+                setPreviewEmployee({
+                  name: item.name,
+                  employeeId: item.employeeId,
+                  department: item.department,
+                  photoUri: item.photoUri,
+                  joiningDate: item.joiningDate,
+                  phone: item.phone,
+                });
+              }}
+              accessibilityLabel="Preview Face Photo"
+            >
+              <MaterialCommunityIcons name="eye-outline" size={15} color="#059669" />
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity
+            style={styles.iconEditButton}
+            onPress={() => handleOpenEditModal(item)}
+          >
+            <FontAwesome name="pencil" size={13} color="#2563EB" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.iconDeleteButton}
+            onPress={() => handleDeleteEnrolment(item.id, item.name)}
+          >
+            <FontAwesome name="trash" size={13} color="#EF4444" />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Sub info row: Phone, Date, Face mapping status */}
+      <View style={styles.cardDetailsRow}>
+        <View style={styles.detailTag}>
+          <FontAwesome name="phone" size={11} color="#64748B" style={{ marginRight: 4 }} />
+          <Text style={styles.detailTagText} numberOfLines={1}>{item.phone}</Text>
+        </View>
+
+        {item.joiningDate && (
+          <View style={styles.detailTag}>
+            <FontAwesome name="calendar" size={10} color="#64748B" style={{ marginRight: 4 }} />
+            <Text style={styles.detailTagText} numberOfLines={1}>{item.joiningDate}</Text>
+          </View>
+        )}
+
+        <TouchableOpacity
+          activeOpacity={item.photoUri ? 0.7 : 0.85}
+          onPress={() => {
+            if (item.photoUri) {
+              setPreviewEmployee({
+                name: item.name,
+                employeeId: item.employeeId,
+                department: item.department,
+                photoUri: item.photoUri,
+                joiningDate: item.joiningDate,
+                phone: item.phone,
+              });
+            } else {
+              handleOpenEditModal(item);
+            }
+          }}
+          style={[
+            styles.faceMappedBadge,
+            {
+              backgroundColor: item.photoUri ? '#ECFDF5' : '#FFF7ED',
+              borderColor: item.photoUri ? '#A7F3D0' : '#FED7AA',
+            },
+          ]}
+        >
+          <MaterialCommunityIcons
+            name={item.photoUri ? 'face-recognition' : 'face-man-shimmer-outline'}
+            size={12}
+            color={item.photoUri ? '#059669' : '#C2410C'}
+            style={{ marginRight: 3 }}
+          />
+          <Text
+            style={[styles.faceMappedText, { color: item.photoUri ? '#059669' : '#C2410C' }]}
+            numberOfLines={1}
+          >
+            {item.photoUri ? 'Face Mapped' : 'Pending Face'}
+          </Text>
+          {item.photoUri ? (
+            <MaterialCommunityIcons name="chevron-right" size={11} color="#059669" style={{ marginLeft: 2 }} />
+          ) : null}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -704,20 +918,70 @@ export default function EnrolmentScreen() {
         )}
       </View>
 
-      {/* List View */}
+      {/* List / Folder View */}
       <View style={styles.listContainer}>
         <View style={styles.listHeaderRow}>
-          <Text style={styles.sectionSubTitle} numberOfLines={1}>
-            {searchQuery
-              ? `Results for "${searchQuery}" (${filteredList.length})`
-              : selectedDept === 'All'
-              ? `All Employees (${filteredList.length})`
-              : `${selectedDept} Department (${filteredList.length})`}
-          </Text>
-          <TouchableOpacity onPress={handleOpenAddModal} style={styles.quickAddBtn}>
-            <FontAwesome name="plus" size={12} color="#FF6900" style={{ marginRight: 4 }} />
-            <Text style={styles.quickAddBtnText}>Add</Text>
-          </TouchableOpacity>
+          <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
+            <Text style={styles.sectionSubTitle} numberOfLines={1}>
+              {searchQuery
+                ? `Results for "${searchQuery}" (${filteredList.length})`
+                : selectedDept === 'All'
+                ? `Directory (${filteredList.length})`
+                : `${selectedDept} Dept (${filteredList.length})`}
+            </Text>
+            {viewMode === 'folders' && departmentFolders.length > 1 && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
+                <TouchableOpacity onPress={expandAllFolders} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                  <Text style={styles.folderActionLink}>Expand All</Text>
+                </TouchableOpacity>
+                <Text style={{ color: '#CBD5E1', fontSize: 10 }}>·</Text>
+                <TouchableOpacity onPress={collapseAllFolders} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                  <Text style={styles.folderActionLink}>Collapse All</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            {/* View Mode Switcher: Folders vs List */}
+            <View style={styles.viewModeSwitcher}>
+              <TouchableOpacity
+                style={[styles.viewModeBtn, viewMode === 'folders' && styles.viewModeBtnActive]}
+                onPress={() => setViewMode('folders')}
+                activeOpacity={0.8}
+              >
+                <MaterialCommunityIcons
+                  name="folder-outline"
+                  size={13}
+                  color={viewMode === 'folders' ? '#FFFFFF' : '#64748B'}
+                  style={{ marginRight: 3 }}
+                />
+                <Text style={[styles.viewModeText, viewMode === 'folders' && styles.viewModeTextActive]}>
+                  Folders
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.viewModeBtn, viewMode === 'list' && styles.viewModeBtnActive]}
+                onPress={() => setViewMode('list')}
+                activeOpacity={0.8}
+              >
+                <MaterialCommunityIcons
+                  name="view-list"
+                  size={13}
+                  color={viewMode === 'list' ? '#FFFFFF' : '#64748B'}
+                  style={{ marginRight: 3 }}
+                />
+                <Text style={[styles.viewModeText, viewMode === 'list' && styles.viewModeTextActive]}>
+                  List
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity onPress={() => handleOpenAddModal()} style={styles.quickAddBtn}>
+              <FontAwesome name="plus" size={11} color="#FF6900" style={{ marginRight: 4 }} />
+              <Text style={styles.quickAddBtnText}>Add</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {filteredList.length === 0 ? (
@@ -749,6 +1013,93 @@ export default function EnrolmentScreen() {
               </TouchableOpacity>
             ) : null}
           </View>
+        ) : viewMode === 'folders' ? (
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+            {departmentFolders.map((folder) => {
+              const isExpanded = isFolderExpanded(folder.department);
+              return (
+                <View key={folder.department} style={styles.folderCard}>
+                  {/* Folder Header */}
+                  <TouchableOpacity
+                    style={[styles.folderHeader, isExpanded && styles.folderHeaderActive]}
+                    onPress={() => toggleFolder(folder.department)}
+                    activeOpacity={0.75}
+                  >
+                    <View style={styles.folderHeaderLeft}>
+                      <View style={[styles.folderIconBox, isExpanded && styles.folderIconBoxActive]}>
+                        <MaterialCommunityIcons
+                          name={isExpanded ? 'folder-open' : 'folder'}
+                          size={22}
+                          color={isExpanded ? THEME_COLOR : '#64748B'}
+                        />
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <Text style={styles.folderTitle} numberOfLines={1}>{folder.department}</Text>
+                          <View style={styles.folderStaffCountBadge}>
+                            <Text style={styles.folderStaffCountText}>{folder.items.length} Staff</Text>
+                          </View>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 5 }}>
+                          <MaterialCommunityIcons
+                            name={folder.mappedCount === folder.items.length && folder.items.length > 0 ? "shield-check" : "face-recognition"}
+                            size={12}
+                            color={folder.mappedCount === folder.items.length && folder.items.length > 0 ? "#059669" : "#C2410C"}
+                          />
+                          <Text style={styles.folderSubtext}>
+                            {folder.mappedCount}/{folder.items.length} Face Mapped
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    <View style={styles.folderHeaderRight}>
+                      <TouchableOpacity
+                        style={styles.folderQuickAddBtn}
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          handleOpenAddModal(folder.department);
+                        }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <FontAwesome name="plus" size={11} color={THEME_COLOR} />
+                      </TouchableOpacity>
+                      <MaterialCommunityIcons
+                        name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                        size={20}
+                        color="#64748B"
+                        style={{ marginLeft: 6 }}
+                      />
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Folder Contents */}
+                  {isExpanded && (
+                    <View style={styles.folderBody}>
+                      {folder.items.length === 0 ? (
+                        <View style={styles.emptyFolderCard}>
+                          <Text style={styles.emptyFolderText}>No employees in this folder.</Text>
+                          <TouchableOpacity
+                            style={styles.emptyFolderAddBtn}
+                            onPress={() => handleOpenAddModal(folder.department)}
+                          >
+                            <FontAwesome name="plus" size={10} color={THEME_COLOR} style={{ marginRight: 4 }} />
+                            <Text style={styles.emptyFolderAddBtnText}>Add Employee</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : (
+                        folder.items.map((item) => (
+                          <View key={item.id} style={{ marginBottom: 10 }}>
+                            {renderEmployeeCard(item)}
+                          </View>
+                        ))
+                      )}
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </ScrollView>
         ) : (
           <FlatList
             data={filteredList}
@@ -756,159 +1107,8 @@ export default function EnrolmentScreen() {
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scrollContent}
             renderItem={({ item }) => (
-              <View style={styles.employeeCard}>
-                <View style={styles.cardHeaderRow}>
-                  {/* Face Avatar with Touch to Preview */}
-                  <TouchableOpacity
-                    style={styles.avatarTouchWrapper}
-                    activeOpacity={item.photoUri ? 0.75 : 0.85}
-                    onPress={() => {
-                      if (item.photoUri) {
-                        setPreviewEmployee({
-                          name: item.name,
-                          employeeId: item.employeeId,
-                          department: item.department,
-                          photoUri: item.photoUri,
-                          joiningDate: item.joiningDate,
-                          phone: item.phone,
-                        });
-                      } else {
-                        ThemedAlert.alert(
-                          'No Face Photo',
-                          `No biometric face registered for ${item.name}. Would you like to enroll one now?`,
-                          [
-                            { text: 'Cancel', style: 'cancel' },
-                            { text: 'Add Face', onPress: () => handleOpenEditModal(item) },
-                          ],
-                          'info'
-                        );
-                      }
-                    }}
-                  >
-                    {item.photoUri ? (
-                      <View style={styles.avatarPhotoFrame}>
-                        <Image
-                          source={{ uri: item.photoUri }}
-                          style={styles.cardAvatarPhoto}
-                          resizeMode="cover"
-                        />
-                        <View style={styles.avatarPreviewBadge}>
-                          <MaterialCommunityIcons name="magnify" size={10} color="#FFFFFF" />
-                        </View>
-                      </View>
-                    ) : (
-                      <View style={styles.cardAvatarCircle}>
-                        <FontAwesome name="user" size={18} color="#FF6900" />
-                        <View style={styles.avatarAddBadge}>
-                          <FontAwesome name="plus" size={7} color="#FFFFFF" />
-                        </View>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-
-                  {/* Name and Badges */}
-                  <View style={styles.cardInfoContainer}>
-                    <Text style={styles.cardEmpName} numberOfLines={1} ellipsizeMode="tail">
-                      {item.name}
-                    </Text>
-                    <View style={styles.cardBadgesRow}>
-                      <Text style={styles.cardEmpIdBadge} numberOfLines={1}>{item.employeeId}</Text>
-                      <View style={styles.cardDeptBadge}>
-                        <Text style={styles.cardDeptBadgeText} numberOfLines={1}>{item.department || 'General'}</Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  {/* Actions */}
-                  <View style={styles.cardActionRow}>
-                    {item.photoUri ? (
-                      <TouchableOpacity
-                        style={styles.iconPreviewButton}
-                        onPress={() => {
-                          setPreviewEmployee({
-                            name: item.name,
-                            employeeId: item.employeeId,
-                            department: item.department,
-                            photoUri: item.photoUri,
-                            joiningDate: item.joiningDate,
-                            phone: item.phone,
-                          });
-                        }}
-                        accessibilityLabel="Preview Face Photo"
-                      >
-                        <MaterialCommunityIcons name="eye-outline" size={15} color="#059669" />
-                      </TouchableOpacity>
-                    ) : null}
-                    <TouchableOpacity
-                      style={styles.iconEditButton}
-                      onPress={() => handleOpenEditModal(item)}
-                    >
-                      <FontAwesome name="pencil" size={13} color="#2563EB" />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.iconDeleteButton}
-                      onPress={() => handleDeleteEnrolment(item.id, item.name)}
-                    >
-                      <FontAwesome name="trash" size={13} color="#EF4444" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                {/* Sub info row: Phone, Date, Face mapping status */}
-                <View style={styles.cardDetailsRow}>
-                  <View style={styles.detailTag}>
-                    <FontAwesome name="phone" size={11} color="#64748B" style={{ marginRight: 4 }} />
-                    <Text style={styles.detailTagText} numberOfLines={1}>{item.phone}</Text>
-                  </View>
-
-                  {item.joiningDate && (
-                    <View style={styles.detailTag}>
-                      <FontAwesome name="calendar" size={10} color="#64748B" style={{ marginRight: 4 }} />
-                      <Text style={styles.detailTagText} numberOfLines={1}>{item.joiningDate}</Text>
-                    </View>
-                  )}
-
-                  <TouchableOpacity
-                    activeOpacity={item.photoUri ? 0.7 : 0.85}
-                    onPress={() => {
-                      if (item.photoUri) {
-                        setPreviewEmployee({
-                          name: item.name,
-                          employeeId: item.employeeId,
-                          department: item.department,
-                          photoUri: item.photoUri,
-                          joiningDate: item.joiningDate,
-                          phone: item.phone,
-                        });
-                      } else {
-                        handleOpenEditModal(item);
-                      }
-                    }}
-                    style={[
-                      styles.faceMappedBadge,
-                      {
-                        backgroundColor: item.photoUri ? '#ECFDF5' : '#FFF7ED',
-                        borderColor: item.photoUri ? '#A7F3D0' : '#FED7AA',
-                      },
-                    ]}
-                  >
-                    <MaterialCommunityIcons
-                      name={item.photoUri ? 'face-recognition' : 'face-man-shimmer-outline'}
-                      size={12}
-                      color={item.photoUri ? '#059669' : '#C2410C'}
-                      style={{ marginRight: 3 }}
-                    />
-                    <Text
-                      style={[styles.faceMappedText, { color: item.photoUri ? '#059669' : '#C2410C' }]}
-                      numberOfLines={1}
-                    >
-                      {item.photoUri ? 'Face Mapped' : 'Pending Face'}
-                    </Text>
-                    {item.photoUri ? (
-                      <MaterialCommunityIcons name="chevron-right" size={11} color="#059669" style={{ marginLeft: 2 }} />
-                    ) : null}
-                  </TouchableOpacity>
-                </View>
+              <View style={{ marginBottom: 10 }}>
+                {renderEmployeeCard(item)}
               </View>
             )}
           />
@@ -918,7 +1118,7 @@ export default function EnrolmentScreen() {
       {/* Vertical Collapsible Floating Action Dock */}
       <View style={styles.bottomDockContainer}>
         <Animated.View style={[styles.absoluteActionFab, { transform: [{ translateY: addTranslateY }] }]}>
-          <TouchableOpacity style={styles.innerFab} onPress={handleOpenAddModal} activeOpacity={0.85}>
+          <TouchableOpacity style={styles.innerFab} onPress={() => handleOpenAddModal()} activeOpacity={0.85}>
             <FontAwesome name="plus" size={16} color="#FFFFFF" />
           </TouchableOpacity>
         </Animated.View>
@@ -1213,7 +1413,7 @@ export default function EnrolmentScreen() {
         onClose={() => setShowDatePicker(false)}
       />
 
-      {/* Camera Modal for Photo Capture & Face Detection (Full Screen) */}
+      {/* Camera Modal for Photo Capture & Face Detection (Centered Square 1:1 Viewport) */}
       <Modal
         visible={cameraVisible}
         animationType="slide"
@@ -1222,48 +1422,83 @@ export default function EnrolmentScreen() {
         onRequestClose={() => setCameraVisible(false)}
       >
         <View style={styles.cameraModalContainer}>
-          <StatusBar barStyle="light-content" backgroundColor="#000000" translucent={true} />
-          {/* CameraView full screen */}
-          {cameraVisible && (
-            <CameraView
-              style={StyleSheet.absoluteFillObject}
-              facing="front"
-              mirror={true}
-              mode="picture"
-              animateShutter={false}
-              ref={cameraRef}
-            />
-          )}
+          <StatusBar barStyle="light-content" backgroundColor="#060F1E" translucent={true} />
 
-          {/* Absolute Positioned Overlay UI */}
-          <SafeAreaView style={styles.cameraOverlayContainer} pointerEvents="box-none">
+          <SafeAreaView style={styles.cameraModalContent}>
             {/* Header */}
             <View style={styles.cameraHeader}>
               <TouchableOpacity onPress={() => setCameraVisible(false)} style={styles.closeCameraButton}>
-                <FontAwesome name="close" size={20} color="#FFFFFF" />
+                <FontAwesome name="close" size={18} color="#FFFFFF" />
               </TouchableOpacity>
               <View style={styles.cameraTitleBadge}>
-                <MaterialCommunityIcons name="face-recognition" size={16} color="#FF6900" style={{ marginRight: 6 }} />
-                <Text style={styles.cameraTitle}>Face Enrolment</Text>
+                <MaterialCommunityIcons name="crop-square" size={16} color="#FF6900" style={{ marginRight: 6 }} />
+                <Text style={styles.cameraTitle}>1:1 Square Biometric Capture</Text>
               </View>
               <View style={{ width: 40 }} />
             </View>
 
-            {/* Centered Face Detection Guide Reticle */}
-            <View style={styles.reticleWrapper} pointerEvents="none">
-              <View style={styles.reticleBox}>
-                {/* 4 Corners */}
+            {/* Instruction Banner */}
+            <View style={styles.squareHintBanner}>
+              <MaterialCommunityIcons name="face-recognition" size={14} color="#10B981" style={{ marginRight: 6 }} />
+              <Text style={styles.squareHintText}>
+                Center face inside square frame (captured exactly 1:1)
+              </Text>
+            </View>
+
+            {/* Centered Square Viewport Stage */}
+            <View style={styles.cameraCenterStage}>
+              <View style={styles.squareCameraViewport}>
+                {cameraVisible && (
+                  <CameraView
+                    style={StyleSheet.absoluteFillObject}
+                    facing="front"
+                    mirror={true}
+                    mode="picture"
+                    animateShutter={false}
+                    ref={cameraRef}
+                  />
+                )}
+
+                {/* Corner reticles inside the centered square */}
                 <View style={[styles.camCorner, styles.camCornerTL]} />
                 <View style={[styles.camCorner, styles.camCornerTR]} />
                 <View style={[styles.camCorner, styles.camCornerBL]} />
                 <View style={[styles.camCorner, styles.camCornerBR]} />
+
+                {/* Center Face Oval Guide */}
+                <View style={styles.cameraFaceOval} />
+
+                {/* Laser animation */}
+                <Animated.View
+                  style={[
+                    styles.scanningLaser,
+                    {
+                      transform: [
+                        {
+                          translateY: reticleAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, SQUARE_RETICLE_SIZE - 6],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                />
+
+                {/* 1:1 Aspect Ratio Pill */}
+                <View style={styles.squareRatioBadge}>
+                  <Text style={styles.squareRatioBadgeText}>1:1 SQUARE</Text>
+                </View>
               </View>
-              <Text style={styles.reticleHintText}>Frame face in square (1:1 ratio)</Text>
             </View>
 
             {/* Footer with capture shutter button */}
             <View style={styles.cameraFooter}>
-              <TouchableOpacity style={styles.captureButtonOuter} onPress={handleCapturePhoto} activeOpacity={0.8}>
+              <TouchableOpacity
+                style={styles.captureButtonOuter}
+                onPress={handleCapturePhoto}
+                activeOpacity={0.8}
+              >
                 <View style={styles.captureButtonInner} />
               </TouchableOpacity>
               <Text style={styles.captureLabel}>TAP TO CAPTURE SQUARE PHOTO</Text>
@@ -2410,16 +2645,160 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
   },
+  folderActionLink: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME_COLOR,
+  },
+  viewModeSwitcher: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 2,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  viewModeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  viewModeBtnActive: {
+    backgroundColor: THEME_COLOR,
+    shadowColor: THEME_COLOR,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.25,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  viewModeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  viewModeTextActive: {
+    color: '#FFFFFF',
+  },
+  folderCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 12,
+    overflow: 'hidden',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  folderHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: '#FFFFFF',
+  },
+  folderHeaderActive: {
+    backgroundColor: '#FFFDFB',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F8FAFC',
+  },
+  folderHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  folderIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  folderIconBoxActive: {
+    backgroundColor: THEME_COLOR_10_OPACITY,
+  },
+  folderTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  folderStaffCountBadge: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  folderStaffCountText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#2563EB',
+  },
+  folderSubtext: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  folderHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  folderQuickAddBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: THEME_COLOR_10_OPACITY,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  folderBody: {
+    padding: 12,
+    paddingTop: 8,
+    backgroundColor: '#F8FAFC',
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  emptyFolderCard: {
+    paddingVertical: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyFolderText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontWeight: '500',
+    marginBottom: 8,
+  },
+  emptyFolderAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  emptyFolderAddBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME_COLOR,
+  },
   cameraModalContainer: {
     flex: 1,
     width: '100%',
     height: '100%',
-    backgroundColor: '#000000',
+    backgroundColor: '#060F1E',
   },
-  cameraOverlayContainer: {
-    ...StyleSheet.absoluteFillObject,
+  cameraModalContent: {
+    flex: 1,
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 24,
   },
@@ -2427,54 +2806,85 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: 8,
+    paddingTop: 6,
   },
   closeCameraButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(255,255,255,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   cameraTitleBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 105, 0, 0.5)',
+    borderColor: 'rgba(255, 105, 0, 0.4)',
   },
   cameraTitle: {
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
   },
-  reticleWrapper: {
-    ...StyleSheet.absoluteFillObject,
+  squareHintBanner: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginTop: 8,
+    alignSelf: 'center',
   },
-  reticleBox: {
+  squareHintText: {
+    color: '#E2E8F0',
+    fontSize: 11.5,
+    fontWeight: '600',
+  },
+  cameraCenterStage: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginVertical: 12,
+  },
+  squareCameraViewport: {
     width: SQUARE_RETICLE_SIZE,
     height: SQUARE_RETICLE_SIZE,
     borderRadius: 24,
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
     overflow: 'hidden',
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    backgroundColor: '#0A192F',
+    borderWidth: 2.5,
+    borderColor: 'rgba(255, 105, 0, 0.5)',
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.6,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  cameraFaceOval: {
+    width: Math.round(SQUARE_RETICLE_SIZE * 0.64),
+    height: Math.round(SQUARE_RETICLE_SIZE * 0.8),
+    borderRadius: Math.round(SQUARE_RETICLE_SIZE * 0.4),
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+    borderStyle: 'dashed',
+    position: 'absolute',
   },
   camCorner: {
     position: 'absolute',
-    width: 38,
-    height: 38,
+    width: 36,
+    height: 36,
     borderColor: '#FFFFFF',
-    borderWidth: 4.5,
+    borderWidth: 4,
   },
   camCornerTL: { top: -2, left: -2, borderRightWidth: 0, borderBottomWidth: 0, borderTopLeftRadius: 22 },
   camCornerTR: { top: -2, right: -2, borderLeftWidth: 0, borderBottomWidth: 0, borderTopRightRadius: 22 },
@@ -2483,32 +2893,32 @@ const styles = StyleSheet.create({
   scanningLaser: {
     position: 'absolute',
     width: '100%',
-    height: 2,
+    height: 2.5,
     backgroundColor: '#FF6900',
     shadowColor: '#FF6900',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 6,
+    shadowOpacity: 0.9,
+    shadowRadius: 8,
   },
-  reticleCenterDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#FF6900',
+  squareRatioBadge: {
+    position: 'absolute',
+    bottom: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
   },
-  reticleHintText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 16,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 14,
+  squareRatioBadgeText: {
+    color: '#FF6900',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
   },
   cameraFooter: {
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   captureButtonOuter: {
     width: 74,
