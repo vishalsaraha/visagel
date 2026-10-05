@@ -34,24 +34,15 @@ export default function DashboardScreen() {
     removePunch,
     departments,
     enrolledEmployees,
-    leaves,
-    deleteLeave,
-    markEmployeeLeave,
   } = useAttendance();
   const [orgAccount] = useState(() => getOrgPlatformAccountDb());
   const [date, setDate] = useState(new Date());
   const [showPicker, setShowPicker] = useState(false);
   const [selectedEmpPunches, setSelectedEmpPunches] = useState<EmployeeAttendance | null>(null);
   const [selectedEmpForHistory, setSelectedEmpForHistory] = useState<EmployeeAttendance | null>(null);
-  const [leaveModalVisible, setLeaveModalVisible] = useState(false);
-  const [newLeaveEmpId, setNewLeaveEmpId] = useState('');
-  const [newLeaveType, setNewLeaveType] = useState<'Casual' | 'Sick' | 'Earned' | 'Unpaid'>('Casual');
-  const [newLeaveStart, setNewLeaveStart] = useState(formatLocalDate(new Date()));
-  const [newLeaveEnd, setNewLeaveEnd] = useState(formatLocalDate(new Date()));
-  const [newLeaveReason, setNewLeaveReason] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDept, setSelectedDept] = useState('All');
-  const [selectedStatus, setSelectedStatus] = useState<'All' | 'Present' | 'Late' | 'Half Day' | 'On Leave'>('All');
+  const [selectedStatus, setSelectedStatus] = useState<'All' | 'Present' | 'Late' | 'Half Day'>('All');
   const [selectedPunchType, setSelectedPunchType] = useState<'All' | 'IN Only' | 'OUT Only'>('All');
   const [sortBy, setSortBy] = useState<'name' | 'time' | 'punches'>('name');
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
@@ -84,8 +75,7 @@ export default function DashboardScreen() {
         selectedStatus === 'All' ||
         (selectedStatus === 'Present' && r.status === 'PRESENT') ||
         (selectedStatus === 'Late' && r.status === 'LATE') ||
-        (selectedStatus === 'Half Day' && r.status === 'HALF_DAY') ||
-        (selectedStatus === 'On Leave' && r.status === 'ON_LEAVE');
+        (selectedStatus === 'Half Day' && r.status === 'HALF_DAY');
 
       let matchesPunchType = true;
       if (selectedPunchType === 'IN Only') {
@@ -119,34 +109,16 @@ export default function DashboardScreen() {
       return 0;
     });
 
-  const onLeaveToday = enrolledEmployees.filter((emp) =>
-    leaves.some(
-      (l) =>
-        l.employeeId === emp.employeeId &&
-        l.startDate <= selectedDateStr &&
-        l.endDate >= selectedDateStr &&
-        l.status === 'APPROVED'
-    )
-  ).length;
+  const absentCount = Math.max(0, enrolledEmployees.length - dayRecords.length);
 
-  const absentCount = enrolledEmployees.filter(
-    (emp) =>
-      !dayRecords.some((r) => r.employeeId === emp.employeeId) &&
-      !leaves.some(
-        (l) =>
-          l.employeeId === emp.employeeId &&
-          l.startDate <= selectedDateStr &&
-          l.endDate >= selectedDateStr &&
-          l.status === 'APPROVED'
-      )
-  ).length;
-
-  const stats = {
-    markedToday: dayRecords.length,
-    onLeaveToday,
-    totalEnrolled: enrolledEmployees.length,
-    absentToday: absentCount,
-  };
+  const stats = useMemo(
+    () => ({
+      totalEnrolled: enrolledEmployees.length,
+      markedToday: dayRecords.length,
+      absentToday: Math.max(0, enrolledEmployees.length - dayRecords.length),
+    }),
+    [enrolledEmployees, dayRecords]
+  );
 
   // Group filtered records into department folders
   const departmentFolders = useMemo(() => {
@@ -445,17 +417,6 @@ export default function DashboardScreen() {
               <Text style={styles.metricLabel}>Present</Text>
             </View>
           </View>
-
-          <View style={styles.metricCard}>
-            <View style={[styles.metricIconWrapBlue, { backgroundColor: '#F5F3FF' }]}>
-              <MaterialCommunityIcons name="calendar-account" size={16} color="#7C3AED" />
-            </View>
-            <View>
-              <Text style={[styles.metricValue, { color: stats.onLeaveToday > 0 ? '#7C3AED' : '#0F172A' }]}>{stats.onLeaveToday}</Text>
-              <Text style={styles.metricLabel}>On Leave</Text>
-            </View>
-          </View>
-
           <View style={styles.metricCard}>
             <View style={[styles.metricIconWrapBlue, { backgroundColor: '#FEF2F2' }]}>
               <MaterialCommunityIcons name="account-remove" size={16} color="#DC2626" />
@@ -481,12 +442,7 @@ export default function DashboardScreen() {
         <View style={styles.actionRow}>
           <TouchableOpacity style={[styles.actionButton, { flex: 1 }]} onPress={exportToCSV} activeOpacity={0.8}>
             <FontAwesome name="download" size={10} color="#FFFFFF" style={{ marginRight: 3 }} />
-            <Text style={styles.actionButtonText} numberOfLines={1}>Export</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={[styles.actionButton, { flex: 1, backgroundColor: '#7C3AED' }]} onPress={() => setLeaveModalVisible(true)} activeOpacity={0.8}>
-            <MaterialCommunityIcons name="calendar-multiselect" size={12} color="#FFFFFF" style={{ marginRight: 3 }} />
-            <Text style={styles.actionButtonText} numberOfLines={1}>Leaves</Text>
+            <Text style={styles.actionButtonText} numberOfLines={1}>Export CSV</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={[styles.actionButton, { flex: 1, backgroundColor: '#0A192F' }]} onPress={handleCalendarIntegration} activeOpacity={0.8}>
@@ -496,7 +452,7 @@ export default function DashboardScreen() {
 
           <TouchableOpacity style={[styles.actionButton, { flex: 1, backgroundColor: '#059669' }]} onPress={handleSendEmailSummary} activeOpacity={0.8}>
             <MaterialCommunityIcons name="email-fast-outline" size={12} color="#FFFFFF" style={{ marginRight: 3 }} />
-            <Text style={styles.actionButtonText} numberOfLines={1}>Email</Text>
+            <Text style={styles.actionButtonText} numberOfLines={1}>Email Summary</Text>
           </TouchableOpacity>
         </View>
 
@@ -557,158 +513,174 @@ export default function DashboardScreen() {
             </View>
           )}
 
-          {/* Expandable Filter Drawer */}
-          {isFilterExpanded && (
-            <View style={styles.expandableFilterCard}>
-              <View style={styles.filterCardHeader}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <MaterialCommunityIcons name="tune-variant" size={13} color={THEME_COLOR} style={{ marginRight: 4 }} />
-                  <Text style={styles.filterCardHeading}>FILTERS & SORT</Text>
-                </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  {hasActiveFilters && (
-                    <TouchableOpacity onPress={resetFilters} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                      <Text style={styles.filterResetLink}>Reset</Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity
-                    onPress={() => setIsFilterExpanded(false)}
-                    style={styles.filterDoneBtn}
-                    activeOpacity={0.8}
-                  >
-                    <FontAwesome name="check" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
-                    <Text style={styles.filterDoneBtnText}>Done</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* Department pills */}
-              <Text style={styles.filterSectionLabel}>DEPARTMENT</Text>
-              <View style={styles.pillsWrapRow}>
-                {deptList.map((dept) => (
-                  <TouchableOpacity
-                    key={dept}
-                    style={[
-                      styles.compactPill,
-                      selectedDept === dept ? styles.compactPillActive : styles.compactPillInactive,
-                    ]}
-                    onPress={() => setSelectedDept(dept)}
-                    activeOpacity={0.75}
-                  >
-                    <Text
-                      style={[
-                        styles.compactPillText,
-                        selectedDept === dept ? styles.compactPillTextActive : styles.compactPillTextInactive,
-                      ]}
-                    >
-                      {dept}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* Status Filter Pills */}
-              <Text style={[styles.filterSectionLabel, { marginTop: 10 }]}>ATTENDANCE STATUS</Text>
-              <View style={styles.pillsWrapRow}>
-                {(
-                  [
-                    { id: 'All', label: 'All', dot: null },
-                    { id: 'Present', label: 'Present', dot: '#10B981' },
-                    { id: 'Late', label: 'Late', dot: '#F59E0B' },
-                    { id: 'Half Day', label: 'Half Day', dot: '#8B5CF6' },
-                    { id: 'On Leave', label: 'On Leave', dot: '#3B82F6' },
-                  ] as const
-                ).map((st) => (
-                  <TouchableOpacity
-                    key={st.id}
-                    style={[
-                      styles.compactPill,
-                      selectedStatus === st.id ? styles.compactPillActive : styles.compactPillInactive,
-                    ]}
-                    onPress={() => setSelectedStatus(st.id)}
-                    activeOpacity={0.75}
-                  >
-                    {st.dot && (
-                      <View style={[
-                        styles.statusDot,
-                        { backgroundColor: selectedStatus === st.id ? 'rgba(255,255,255,0.7)' : st.dot }
-                      ]} />
+          {/* Controlled Modal Filter Overlay — Zero Layout Jump */}
+          <Modal
+            visible={isFilterExpanded}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => setIsFilterExpanded(false)}
+          >
+            <TouchableOpacity
+              style={styles.filterModalOverlay}
+              activeOpacity={1}
+              onPress={() => setIsFilterExpanded(false)}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                style={styles.filterModalCard}
+                onPress={(e) => e.stopPropagation()}
+              >
+                <View style={styles.filterCardHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <MaterialCommunityIcons name="tune-variant" size={15} color={THEME_COLOR} style={{ marginRight: 6 }} />
+                    <Text style={styles.filterCardHeading}>FILTERS & SORT</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    {hasActiveFilters && (
+                      <TouchableOpacity onPress={resetFilters} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                        <Text style={styles.filterResetLink}>Reset</Text>
+                      </TouchableOpacity>
                     )}
-                    <Text
-                      style={[
-                        styles.compactPillText,
-                        selectedStatus === st.id ? styles.compactPillTextActive : styles.compactPillTextInactive,
-                      ]}
+                    <TouchableOpacity
+                      onPress={() => setIsFilterExpanded(false)}
+                      style={styles.filterDoneBtn}
+                      activeOpacity={0.8}
                     >
-                      {st.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+                      <FontAwesome name="check" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.filterDoneBtnText}>Done</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
 
-              {/* Punch Activity Section */}
-              <Text style={[styles.filterSectionLabel, { marginTop: 10 }]}>PUNCH ACTIVITY</Text>
-              <View style={styles.pillsWrapRow}>
-                {(['All', 'IN Only', 'OUT Only'] as const).map((pt) => (
-                  <TouchableOpacity
-                    key={pt}
-                    style={[
-                      styles.compactPill,
-                      selectedPunchType === pt ? styles.compactPillActive : styles.compactPillInactive,
-                    ]}
-                    onPress={() => setSelectedPunchType(pt)}
-                    activeOpacity={0.75}
-                  >
-                    <Text
-                      style={[
-                        styles.compactPillText,
-                        selectedPunchType === pt ? styles.compactPillTextActive : styles.compactPillTextInactive,
-                      ]}
-                    >
-                      {pt}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+                <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
+                  {/* Department pills */}
+                  <Text style={styles.filterSectionLabel}>DEPARTMENT</Text>
+                  <View style={styles.pillsWrapRow}>
+                    {deptList.map((dept) => (
+                      <TouchableOpacity
+                        key={dept}
+                        style={[
+                          styles.compactPill,
+                          selectedDept === dept ? styles.compactPillActive : styles.compactPillInactive,
+                        ]}
+                        onPress={() => setSelectedDept(dept)}
+                        activeOpacity={0.75}
+                      >
+                        <Text
+                          style={[
+                            styles.compactPillText,
+                            selectedDept === dept ? styles.compactPillTextActive : styles.compactPillTextInactive,
+                          ]}
+                        >
+                          {dept}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
 
-              {/* Sort Section */}
-              <Text style={[styles.filterSectionLabel, { marginTop: 10 }]}>SORT BY</Text>
-              <View style={styles.pillsWrapRow}>
-                {(
-                  [
-                    { id: 'name', label: 'Name (A-Z)', icon: 'sort-alphabetical-ascending' },
-                    { id: 'time', label: 'Recent Punch', icon: 'clock-fast' },
-                    { id: 'punches', label: 'Punch Count', icon: 'gesture-tap' },
-                  ] as const
-                ).map((s) => (
-                  <TouchableOpacity
-                    key={s.id}
-                    style={[
-                      styles.compactPill,
-                      sortBy === s.id ? styles.compactPillActive : styles.compactPillInactive,
-                    ]}
-                    onPress={() => setSortBy(s.id)}
-                    activeOpacity={0.75}
-                  >
-                    <MaterialCommunityIcons
-                      name={s.icon}
-                      size={11}
-                      color={sortBy === s.id ? '#FFFFFF' : '#64748B'}
-                      style={{ marginRight: 4 }}
-                    />
-                    <Text
-                      style={[
-                        styles.compactPillText,
-                        sortBy === s.id ? styles.compactPillTextActive : styles.compactPillTextInactive,
-                      ]}
-                    >
-                      {s.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          )}
+                  {/* Status Filter Pills */}
+                  <Text style={[styles.filterSectionLabel, { marginTop: 12 }]}>ATTENDANCE STATUS</Text>
+                  <View style={styles.pillsWrapRow}>
+                    {(
+                      [
+                        { id: 'All', label: 'All', dot: null },
+                        { id: 'Present', label: 'Present', dot: '#10B981' },
+                        { id: 'Late', label: 'Late', dot: '#F59E0B' },
+                        { id: 'Half Day', label: 'Half Day', dot: '#8B5CF6' },
+                      ] as const
+                    ).map((st) => (
+                      <TouchableOpacity
+                        key={st.id}
+                        style={[
+                          styles.compactPill,
+                          selectedStatus === st.id ? styles.compactPillActive : styles.compactPillInactive,
+                        ]}
+                        onPress={() => setSelectedStatus(st.id as any)}
+                        activeOpacity={0.75}
+                      >
+                        {st.dot && (
+                          <View style={[
+                            styles.statusDot,
+                            { backgroundColor: selectedStatus === st.id ? 'rgba(255,255,255,0.7)' : st.dot }
+                          ]} />
+                        )}
+                        <Text
+                          style={[
+                            styles.compactPillText,
+                            selectedStatus === st.id ? styles.compactPillTextActive : styles.compactPillTextInactive,
+                          ]}
+                        >
+                          {st.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {/* Punch Activity Section */}
+                  <Text style={[styles.filterSectionLabel, { marginTop: 12 }]}>PUNCH ACTIVITY</Text>
+                  <View style={styles.pillsWrapRow}>
+                    {(['All', 'IN Only', 'OUT Only'] as const).map((pt) => (
+                      <TouchableOpacity
+                        key={pt}
+                        style={[
+                          styles.compactPill,
+                          selectedPunchType === pt ? styles.compactPillActive : styles.compactPillInactive,
+                        ]}
+                        onPress={() => setSelectedPunchType(pt)}
+                        activeOpacity={0.75}
+                      >
+                        <Text
+                          style={[
+                            styles.compactPillText,
+                            selectedPunchType === pt ? styles.compactPillTextActive : styles.compactPillTextInactive,
+                          ]}
+                        >
+                          {pt}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {/* Sort Section */}
+                  <Text style={[styles.filterSectionLabel, { marginTop: 12 }]}>SORT BY</Text>
+                  <View style={styles.pillsWrapRow}>
+                    {(
+                      [
+                        { id: 'name', label: 'Name (A-Z)', icon: 'sort-alphabetical-ascending' },
+                        { id: 'time', label: 'Recent Punch', icon: 'clock-fast' },
+                        { id: 'punches', label: 'Punch Count', icon: 'gesture-tap' },
+                      ] as const
+                    ).map((s) => (
+                      <TouchableOpacity
+                        key={s.id}
+                        style={[
+                          styles.compactPill,
+                          sortBy === s.id ? styles.compactPillActive : styles.compactPillInactive,
+                        ]}
+                        onPress={() => setSortBy(s.id)}
+                        activeOpacity={0.75}
+                      >
+                        <MaterialCommunityIcons
+                          name={s.icon}
+                          size={11}
+                          color={sortBy === s.id ? '#FFFFFF' : '#64748B'}
+                          style={{ marginRight: 4 }}
+                        />
+                        <Text
+                          style={[
+                            styles.compactPillText,
+                            sortBy === s.id ? styles.compactPillTextActive : styles.compactPillTextInactive,
+                          ]}
+                        >
+                          {s.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
         </View>
 
 
@@ -1055,9 +1027,6 @@ export default function DashboardScreen() {
               const presentDays = empRecords.filter((r) => r.status === 'PRESENT').length;
               const lateDays = empRecords.filter((r) => r.status === 'LATE').length;
               const halfDays = empRecords.filter((r) => r.status === 'HALF_DAY').length;
-              const onLeaveDays = leaves.filter(
-                (l) => l.employeeId === selectedEmpForHistory.employeeId && l.status === 'APPROVED'
-              ).length;
 
               return (
                 <View style={{ flex: 1 }}>
@@ -1074,10 +1043,6 @@ export default function DashboardScreen() {
                     <View style={styles.historyKpiBox}>
                       <Text style={[styles.historyKpiValue, { color: '#7C3AED' }]}>{halfDays}</Text>
                       <Text style={styles.historyKpiLabel}>Half Day</Text>
-                    </View>
-                    <View style={styles.historyKpiBox}>
-                      <Text style={[styles.historyKpiValue, { color: '#2563EB' }]}>{onLeaveDays}</Text>
-                      <Text style={styles.historyKpiLabel}>Leaves</Text>
                     </View>
                   </View>
 
@@ -1145,172 +1110,6 @@ export default function DashboardScreen() {
         </View>
       </Modal>
 
-      {/* ── Leave Management Modal ── */}
-      <Modal
-        visible={leaveModalVisible}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setLeaveModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.detailCard, { maxHeight: '90%' }]}>
-            <View style={styles.detailHeader}>
-              <View>
-                <Text style={styles.detailTitle}>Leave Management</Text>
-                <Text style={styles.detailSubtitle}>Grant and review official leaves</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.closeDetailBtn}
-                onPress={() => setLeaveModalVisible(false)}
-              >
-                <FontAwesome name="close" size={16} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {/* Grant New Leave Section */}
-              <Text style={styles.leaveSectionHeading}>GRANT NEW LEAVE</Text>
-
-              {/* Employee Picker */}
-              <Text style={styles.inputLabelSmall}>SELECT EMPLOYEE</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
-                <View style={{ flexDirection: 'row', gap: 6 }}>
-                  {enrolledEmployees.map((emp) => {
-                    const isSelected = (newLeaveEmpId || enrolledEmployees[0]?.employeeId) === emp.employeeId;
-                    return (
-                      <TouchableOpacity
-                        key={emp.id}
-                        style={[
-                          styles.empPickerPill,
-                          isSelected && styles.empPickerPillActive,
-                        ]}
-                        onPress={() => setNewLeaveEmpId(emp.employeeId)}
-                      >
-                        <Text style={[styles.empPickerText, isSelected && { color: '#FFFFFF' }]}>
-                          {emp.name} ({emp.employeeId})
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </ScrollView>
-
-              {/* Leave Type Selector */}
-              <Text style={styles.inputLabelSmall}>LEAVE TYPE</Text>
-              <View style={{ flexDirection: 'row', gap: 6, marginBottom: 10 }}>
-                {(['Casual', 'Sick', 'Earned', 'Unpaid'] as const).map((t) => (
-                  <TouchableOpacity
-                    key={t}
-                    style={[
-                      styles.leaveTypePill,
-                      newLeaveType === t && styles.leaveTypePillActive,
-                    ]}
-                    onPress={() => setNewLeaveType(t)}
-                  >
-                    <Text style={[styles.leaveTypeText, newLeaveType === t && { color: '#FFFFFF' }]}>{t}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* Date range inputs */}
-              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabelSmall}>START DATE</Text>
-                  <TextInput
-                    style={styles.leaveInput}
-                    value={newLeaveStart}
-                    onChangeText={setNewLeaveStart}
-                    placeholder="YYYY-MM-DD"
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.inputLabelSmall}>END DATE</Text>
-                  <TextInput
-                    style={styles.leaveInput}
-                    value={newLeaveEnd}
-                    onChangeText={setNewLeaveEnd}
-                    placeholder="YYYY-MM-DD"
-                  />
-                </View>
-              </View>
-
-              {/* Reason input */}
-              <Text style={styles.inputLabelSmall}>REASON</Text>
-              <TextInput
-                style={[styles.leaveInput, { height: 55, textAlignVertical: 'top' }]}
-                value={newLeaveReason}
-                onChangeText={setNewLeaveReason}
-                placeholder="Reason for leave…"
-                multiline
-              />
-
-              {/* Submit Leave Button */}
-              <TouchableOpacity
-                style={styles.grantLeaveBtn}
-                activeOpacity={0.85}
-                onPress={async () => {
-                  const targetEmpId = newLeaveEmpId || enrolledEmployees[0]?.employeeId;
-                  const emp = enrolledEmployees.find((e) => e.employeeId === targetEmpId);
-                  if (!emp) {
-                    ThemedAlert.alert('Selection Required', 'Please select an employee.', [{ text: 'OK' }], 'warning');
-                    return;
-                  }
-                  await markEmployeeLeave(
-                    emp.employeeId,
-                    emp.name,
-                    newLeaveStart,
-                    newLeaveEnd,
-                    newLeaveType,
-                    newLeaveReason || `${newLeaveType} leave`
-                  );
-                  setNewLeaveReason('');
-                  ThemedAlert.alert('Leave Granted', `Leave recorded for ${emp.name}.`, [{ text: 'OK' }], 'success');
-                }}
-              >
-                <MaterialCommunityIcons name="calendar-plus" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.grantLeaveBtnText}>Grant & Approve Leave</Text>
-              </TouchableOpacity>
-
-              {/* Active Leaves List */}
-              <Text style={[styles.leaveSectionHeading, { marginTop: 16 }]}>
-                ACTIVE & UPCOMING LEAVES ({leaves.length})
-              </Text>
-              {leaves.length === 0 ? (
-                <View style={{ padding: 14, alignItems: 'center' }}>
-                  <Text style={{ color: '#94A3B8', fontSize: 12 }}>No leaves recorded.</Text>
-                </View>
-              ) : (
-                leaves.map((l) => (
-                  <View key={l.id} style={styles.leaveItemCard}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.leaveItemEmpName}>{l.employeeName} ({l.employeeId})</Text>
-                      <Text style={styles.leaveItemDates}>
-                        📅 {l.startDate} → {l.endDate} · <Text style={{ fontWeight: '800', color: '#7C3AED' }}>{l.type}</Text>
-                      </Text>
-                      {l.reason ? <Text style={styles.leaveItemReason}>{`"${l.reason}"`}</Text> : null}
-                    </View>
-                    <TouchableOpacity
-                      style={styles.deleteLeaveBtn}
-                      onPress={() => deleteLeave(l.id)}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <MaterialCommunityIcons name="trash-can-outline" size={16} color="#EF4444" />
-                    </TouchableOpacity>
-                  </View>
-                ))
-              )}
-            </ScrollView>
-
-            <TouchableOpacity
-              style={[styles.closeModalBtn, { marginTop: 12 }]}
-              onPress={() => setLeaveModalVisible(false)}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.closeModalBtnText}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -2281,5 +2080,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 8,
+  },
+  filterModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  filterModalCard: {
+    width: '100%',
+    maxWidth: 480,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    maxHeight: '85%',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 10,
   },
 });

@@ -32,13 +32,15 @@ export default function AuthPasswordModal({
   title = 'HR Admin Login',
   subtitle = 'Enter HR ID & Password to unlock',
   badgeText = 'HR ACCESS LOCK',
-  autoCloseSeconds = 15,
+  autoCloseSeconds = 5,
 }: AuthPasswordModalProps) {
   const [loginIdOrEmail, setLoginIdOrEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [timeLeft, setTimeLeft] = useState<number>(autoCloseSeconds);
+
+  const hasTypedCredentials = Boolean(loginIdOrEmail.trim() || password.trim());
 
   // Reset inputs and timer when modal opens
   useEffect(() => {
@@ -51,9 +53,14 @@ export default function AuthPasswordModal({
     }
   }, [visible, autoCloseSeconds]);
 
-  // Inactivity auto-close timer: counts down every second when modal is visible
+  // Inactivity auto-close timer: counts down 5s if user hasn't entered credentials
   useEffect(() => {
     if (!visible) return;
+
+    // Do NOT close if user has started entering credentials
+    if (hasTypedCredentials) {
+      return;
+    }
 
     const interval = setInterval(() => {
       setTimeLeft((prev) => {
@@ -67,15 +74,16 @@ export default function AuthPasswordModal({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [visible, onClose]);
+  }, [visible, onClose, hasTypedCredentials]);
 
-  // Reset inactivity timer on any interaction
+  // Reset inactivity timer on interaction
   const resetInactivityTimer = () => {
-    setTimeLeft(autoCloseSeconds);
+    if (!hasTypedCredentials) {
+      setTimeLeft(autoCloseSeconds);
+    }
   };
 
   const handleLogin = () => {
-    resetInactivityTimer();
     if (!password) {
       setErrorMessage('Please enter password');
       return;
@@ -137,7 +145,6 @@ export default function AuthPasswordModal({
               placeholderTextColor="#94A3B8"
               value={loginIdOrEmail}
               onChangeText={(text) => {
-                resetInactivityTimer();
                 setLoginIdOrEmail(text);
                 setErrorMessage('');
               }}
@@ -157,7 +164,6 @@ export default function AuthPasswordModal({
               placeholderTextColor="#94A3B8"
               value={password}
               onChangeText={(text) => {
-                resetInactivityTimer();
                 setPassword(text);
                 setErrorMessage('');
               }}
@@ -169,7 +175,6 @@ export default function AuthPasswordModal({
             />
             <TouchableOpacity
               onPress={() => {
-                resetInactivityTimer();
                 setShowPassword(!showPassword);
               }}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -193,9 +198,13 @@ export default function AuthPasswordModal({
 
           {/* Inactivity Auto-Close Badge */}
           <View style={styles.autoClosePill}>
-            <MaterialCommunityIcons name="timer-outline" size={12} color="#94A3B8" style={{ marginRight: 4 }} />
+            <MaterialCommunityIcons name="timer-outline" size={12} color={hasTypedCredentials ? '#10B981' : '#94A3B8'} style={{ marginRight: 4 }} />
             <Text style={styles.autoCloseText}>
-              Auto-closes in <Text style={{ fontWeight: '700', color: THEME_COLOR }}>{timeLeft}s</Text> if inactive
+              {hasTypedCredentials ? (
+                <Text style={{ color: '#059669', fontWeight: '600' }}>Editing credentials — Auto-close paused</Text>
+              ) : (
+                <>Auto-closes in <Text style={{ fontWeight: '700', color: THEME_COLOR }}>{timeLeft}s</Text> if un-entered</>
+              )}
             </Text>
           </View>
 

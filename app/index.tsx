@@ -125,7 +125,7 @@ export default function AttendanceScreen() {
     summary: string;
     photoUri?: string | null;
     confidence?: number;
-    status?: 'PRESENT' | 'LATE' | 'HALF_DAY' | 'ON_LEAVE';
+    status?: 'PRESENT' | 'LATE' | 'HALF_DAY';
     isLate?: boolean;
   } | null>(null);
 
@@ -229,7 +229,7 @@ export default function AttendanceScreen() {
   // ── Core Scan Logic ────────────────────────────────────────────────────────
   const runScan = useCallback(
     async (isAuto = false) => {
-      if (!isFocused || !isCameraReady || isScanningRef.current) return;
+      if (!isFocused || !isCameraReady || isScanningRef.current || authModalVisible) return;
 
       const pool = enrolledEmployees.filter((e) => Boolean(e.photoUri));
       if (pool.length === 0) {
@@ -253,11 +253,11 @@ export default function AttendanceScreen() {
 
       if (!isAuto) {
         setScanPhase('detecting');
-        setStatusMessage('Capturing face image...');
+        setStatusMessage('Scanning...');
       }
 
       let liveShotUri: string | null = null;
-      if (cameraRef.current && isCameraReady && !isCapturingPhotoRef.current) {
+      if (cameraRef.current && isCameraReady && !isCapturingPhotoRef.current && !authModalVisible) {
         isCapturingPhotoRef.current = true;
         try {
           const photo = await cameraRef.current.takePictureAsync({
@@ -267,10 +267,9 @@ export default function AttendanceScreen() {
           });
           liveShotUri = photo?.uri ?? null;
         } catch (err) {
-          // CameraX transient hardware buffer lock retry
           try {
             await delay(350);
-            if (cameraRef.current && isCameraReady) {
+            if (cameraRef.current && isCameraReady && !authModalVisible) {
               const retryPhoto = await cameraRef.current.takePictureAsync({
                 quality: 0.5,
                 shutterSound: false,
@@ -290,18 +289,18 @@ export default function AttendanceScreen() {
       if (!liveShotUri) {
         if (!isAuto) {
           setScanPhase('failed');
-          setStatusMessage('Camera busy — Retrying...');
+          setStatusMessage('Failed');
           try {
             await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
           } catch (_) {}
           setTimeout(() => {
             setScanPhase('idle');
-            setStatusMessage(autoAttendance ? 'Auto-scanning for faces...' : 'Face scanner ready');
+            setStatusMessage('Waiting for face...');
             isScanningRef.current = false;
           }, 1800);
         } else {
           isScanningRef.current = false;
-          if (isFocused && isCameraReady) {
+          if (isFocused && isCameraReady && !authModalVisible) {
             scheduleNextAutoScan();
           }
         }
@@ -310,11 +309,11 @@ export default function AttendanceScreen() {
 
       if (!isAuto) {
         setScanPhase('aligning');
-        setStatusMessage('Analyzing biometric liveness...');
+        setStatusMessage('Face Detected');
         await delay(200);
 
         setScanPhase('matching');
-        setStatusMessage('Matching 128-d Biometric Vectors...');
+        setStatusMessage('Matching...');
         Animated.timing(progressAnim, {
           toValue: 0.7,
           duration: 400,
@@ -359,7 +358,7 @@ export default function AttendanceScreen() {
         setFaceConfidence(0);
         setLastScanned(null);
         setScanPhase('idle');
-        setStatusMessage(autoAttendance ? 'Waiting for face...' : 'Face scanner ready');
+        setStatusMessage('Waiting for face...');
         faceTrackerRef.current.reset();
         temporalBufferRef.current.reset();
         setDebugTelemetry({
@@ -370,7 +369,24 @@ export default function AttendanceScreen() {
           temporalStatus: 'WAITING',
         });
         isScanningRef.current = false;
-        if (autoAttendance && isFocused && isCameraReady) {
+        if (autoAttendance && isFocused && isCameraReady && !authModalVisible) {
+          scheduleNextAutoScan();
+        }
+        return;
+      }
+
+      // ── ENFORCE SINGLE PERSON SCAN ONLY ─────────────────────────────────────
+      if (allFaces.length > 1) {
+        if (verificationResetTimeoutRef.current) {
+          clearTimeout(verificationResetTimeoutRef.current);
+          verificationResetTimeoutRef.current = null;
+        }
+        setDetectedFaces(allFaces);
+        setLastScanned(null);
+        setScanPhase('failed');
+        setStatusMessage('Multiple faces detected — Please keep only 1 face in camera frame.');
+        isScanningRef.current = false;
+        if (autoAttendance && isFocused && isCameraReady && !authModalVisible) {
           scheduleNextAutoScan();
         }
         return;
@@ -415,9 +431,9 @@ export default function AttendanceScreen() {
 
         if (!isAuto) {
           setScanPhase('failed');
-          let failMsg = statusReason || `No face match (${confidence}%) — Try again`;
-          if (isCovered) failMsg = 'Camera covered or too dark';
-          else if (!livenessPassed) failMsg = livenessReason || 'Liveness check failed (Spoof risk)';
+          let failMsg = 'Face Not Recognized';
+          if (isCovered) failMsg = 'Camera covered or low light';
+          else if (!livenessPassed) failMsg = 'Face Not Recognized';
 
           setStatusMessage(failMsg);
           try {
@@ -427,22 +443,18 @@ export default function AttendanceScreen() {
           setTimeout(() => {
             setScanPhase('idle');
             setFaceConfidence(0);
-            setStatusMessage(autoAttendance ? 'Waiting for face...' : 'Face scanner ready');
+            setStatusMessage('Waiting for face...');
             isScanningRef.current = false;
           }, 2000);
         } else {
-          // In auto mode, quietly update status and schedule next scan
+          // In auto mode, update status and schedule next scan
           if (isCovered) {
             setStatusMessage('Waiting for face...');
-          } else if (!livenessPassed) {
-            setStatusMessage('Position face in frame...');
-          } else if (allFaces.length > 1) {
-            setStatusMessage(`Primary target selected (${allFaces.length} faces)...`);
-          } else if (index === -1) {
-            setStatusMessage('Scanning face...');
+          } else {
+            setStatusMessage('Face Detected');
           }
           isScanningRef.current = false;
-          if (isFocused && isCameraReady) {
+          if (isFocused && isCameraReady && !authModalVisible) {
             scheduleNextAutoScan();
           }
         }
@@ -458,13 +470,13 @@ export default function AttendanceScreen() {
       const lastScanTs = lastPunchTimeRef.current[empId] || 0;
       if (isAuto && nowTs - lastScanTs < 8000) {
         isScanningRef.current = false;
-        if (isFocused && isCameraReady) scheduleNextAutoScan();
+        if (isFocused && isCameraReady && !authModalVisible) scheduleNextAutoScan();
         return;
       }
       lastPunchTimeRef.current[empId] = nowTs;
 
       setScanPhase('verified');
-      setStatusMessage(`Verified: ${matchedEmp.name} (${confidence}% match)`);
+      setStatusMessage(`Recognized: ${matchedEmp.name}`);
 
       try {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -507,7 +519,7 @@ export default function AttendanceScreen() {
         isLate: res.isLate,
       });
 
-      // Reset after showing verification card (3000ms hold)
+      // Reset after showing verification card (3000ms hold) -> smooth scanner reset lifecycle
       if (verificationResetTimeoutRef.current) {
         clearTimeout(verificationResetTimeoutRef.current);
       }
@@ -516,14 +528,15 @@ export default function AttendanceScreen() {
         setScanPhase('idle');
         setFaceConfidence(0);
         setLastScanned(null);
-        setStatusMessage(autoAttendance ? 'Waiting for face...' : 'Face scanner ready');
+        setDetectedFaces([]);
+        setStatusMessage('Waiting for face...');
         isScanningRef.current = false;
-        if (autoAttendance && isFocused && isCameraReady) {
+        if (autoAttendance && isFocused && isCameraReady && !authModalVisible) {
           scheduleNextAutoScan();
         }
       }, holdDuration);
     },
-    [enrolledEmployees, attendanceRecords, autoAttendance, aiSettings, isFocused, isCameraReady, voiceFeedback]
+    [enrolledEmployees, attendanceRecords, autoAttendance, aiSettings, isFocused, isCameraReady, authModalVisible, voiceFeedback]
   );
 
   const runScanRef = useRef(runScan);
@@ -533,18 +546,18 @@ export default function AttendanceScreen() {
 
   const scheduleNextAutoScan = useCallback(() => {
     if (autoScanTimerRef.current) clearTimeout(autoScanTimerRef.current);
-    if (!autoAttendance || !isFocused || !isCameraReady) return;
+    if (!autoAttendance || !isFocused || !isCameraReady || authModalVisible) return;
 
     autoScanTimerRef.current = setTimeout(() => {
-      if (!isScanningRef.current && runScanRef.current && isFocused && isCameraReady) {
+      if (!isScanningRef.current && runScanRef.current && isFocused && isCameraReady && !authModalVisible) {
         runScanRef.current(true);
       }
     }, AUTO_SCAN_INTERVAL);
-  }, [autoAttendance, isFocused, isCameraReady]);
+  }, [autoAttendance, isFocused, isCameraReady, authModalVisible]);
 
   // Auto scan trigger on mount, focus, camera ready, or toggle
   useEffect(() => {
-    if (isFocused && isCameraReady && autoAttendance && enrolledEmployees.filter((e) => e.photoUri).length > 0) {
+    if (isFocused && isCameraReady && !authModalVisible && autoAttendance && enrolledEmployees.filter((e) => e.photoUri).length > 0) {
       scheduleNextAutoScan();
     } else {
       if (autoScanTimerRef.current) {
@@ -558,7 +571,7 @@ export default function AttendanceScreen() {
         autoScanTimerRef.current = null;
       }
     };
-  }, [isFocused, isCameraReady, autoAttendance, enrolledEmployees, scheduleNextAutoScan]);
+  }, [isFocused, isCameraReady, authModalVisible, autoAttendance, enrolledEmployees, scheduleNextAutoScan]);
 
   const handleAdminPress = () => {
     if (isAuthenticated) router.push('/screens/enrolment');
@@ -712,6 +725,12 @@ export default function AttendanceScreen() {
                   <Text style={styles.grantBtnText}>Grant Camera Permission</Text>
                 </TouchableOpacity>
               </View>
+            ) : authModalVisible ? (
+              <View style={styles.permissionFallback}>
+                <MaterialCommunityIcons name="shield-lock" size={40} color="#7C3AED" style={{ marginBottom: 8 }} />
+                <Text style={styles.permissionTitle}>HR Login Active</Text>
+                <Text style={styles.permissionSubtitle}>Camera paused while HR Login is active.</Text>
+              </View>
             ) : !isFocused ? (
               <View style={styles.permissionFallback}>
                 <ActivityIndicator size="small" color="#FF6900" style={{ marginBottom: 8 }} />
@@ -732,9 +751,9 @@ export default function AttendanceScreen() {
                   }}
                 />
 
-                {/* Dynamic Multi-Face Bounding Boxes */}
+                {/* Dynamic Face Bounding Box Overlay */}
                 {detectedFaces.map((f, idx) => {
-                  const isPrimary = f.id === primaryFace?.id;
+                  const isMulti = detectedFaces.length > 1;
                   return (
                     <View
                       key={`detected-face-${f.id || 'box'}-${idx}`}
@@ -745,24 +764,17 @@ export default function AttendanceScreen() {
                           top: `${f.boundingBox.y * 100}%`,
                           width: `${f.boundingBox.width * 100}%`,
                           height: `${f.boundingBox.height * 100}%`,
-                          borderColor: isPrimary ? '#10B981' : '#F59E0B',
-                          borderWidth: isPrimary ? 2 : 1.5,
+                          borderColor: isMulti ? '#EF4444' : '#10B981',
+                          borderWidth: 2,
                         },
                       ]}
                       pointerEvents="none"
                     >
-                      <View
-                        style={[
-                          styles.faceBoxTag,
-                          { backgroundColor: isPrimary ? 'rgba(16,185,129,0.90)' : 'rgba(245,158,11,0.90)' },
-                        ]}
-                      >
-                        <Text style={styles.faceBoxTagText}>
-                          {isPrimary
-                            ? `PRIMARY TARGET ${primaryScoreInfo ? `(${Math.round(primaryScoreInfo.totalScore * 100)}%)` : ''}`
-                            : `BACKGROUND SUBJECT #${idx + 1}`}
-                        </Text>
-                      </View>
+                      {isMulti && (
+                        <View style={[styles.faceBoxTag, { backgroundColor: '#EF4444' }]}>
+                          <Text style={styles.faceBoxTagText}>1 PERSON ONLY</Text>
+                        </View>
+                      )}
                     </View>
                   );
                 })}

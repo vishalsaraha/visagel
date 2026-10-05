@@ -65,7 +65,6 @@ export default function SettingsScreen() {
     customFields, saveCustomFields,
     aiSettings, saveAiSettings, enrolledEmployees,
     voiceFeedback, saveVoiceFeedback,
-    groupScanMode, saveGroupScanMode,
   } = useAttendance();
 
   // Feature toggles
@@ -634,24 +633,7 @@ export default function SettingsScreen() {
             />
           </View>
 
-          <View style={styles.cardDivider} />
 
-          {/* Group Scan Mode */}
-          <View style={styles.menuCardRow}>
-            <View style={[styles.iconBox, { backgroundColor: '#EFF6FF' }]}>
-              <MaterialCommunityIcons name="account-group" size={20} color="#2563EB" />
-            </View>
-            <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle} numberOfLines={1}>Group Scan Mode</Text>
-              <Text style={styles.menuDescription} numberOfLines={1} ellipsizeMode="tail">Fast 1.0s turnaround for shift crowds</Text>
-            </View>
-            <Switch
-              value={groupScanMode}
-              onValueChange={saveGroupScanMode}
-              trackColor={{ false: '#E2E8F0', true: THEME_COLOR }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
         </View>
 
         {/* SECTION 2: CLOUD & REPORTS */}

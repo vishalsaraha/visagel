@@ -3,7 +3,7 @@ import { ThemedAlert } from '@/components/ThemedAlertProvider';
 import { EnrolledEmployee, useAttendance } from '@/context/AttendanceContext';
 import { useAuth } from '@/context/AuthContext';
 import { formatLocalDate } from '@/utils/clockSync';
-import { deriveCompanyName, getOrgPlatformAccountDb } from '@/utils/database';
+import { deriveCompanyName, deriveCompanyPrefix, getOrgPlatformAccountDb } from '@/utils/database';
 import { cropAndAlignFace, cropToCenteredSquarePhoto, detectFacesInImage, extractFaceVector } from '@/utils/faceEngine';
 import { PhotoQualityResult, validateEnrollmentPhotoQuality } from '@/utils/faceMatch';
 import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -155,7 +155,7 @@ export default function EnrolmentScreen() {
     if (cameraRef.current) {
       try {
         const photo = await cameraRef.current.takePictureAsync({
-          quality: 0.8,
+          quality: 0.85,
           skipProcessing: false,
           shutterSound: false,
         });
@@ -171,20 +171,9 @@ export default function EnrolmentScreen() {
             return;
           }
 
-          // Step 1: Crop & align biometric patch for embedding (112x112)
-          const { croppedUri } = await cropAndAlignFace(photo.uri, faces[0].boundingBox, faces[0].landmarks);
-          const finalPhotoUri = croppedUri || photo.uri;
-
-          // Step 2: Also produce a high-res 1:1 square centered avatar for display
-          const { squareUri } = await cropToCenteredSquarePhoto(
-            photo.uri,
-            undefined,
-            undefined,
-            faces[0].boundingBox
-          );
-          const displayPhotoUri = squareUri || finalPhotoUri;
-
-          const quality = await validateEnrollmentPhotoQuality(finalPhotoUri);
+          // Full captured face photo used consistently across capture, preview, saving & recognition
+          const fullPhotoUri = photo.uri;
+          const quality = await validateEnrollmentPhotoQuality(fullPhotoUri);
           setPhotoQuality(quality);
 
           if (!quality.isValid) {
@@ -196,7 +185,7 @@ export default function EnrolmentScreen() {
                 {
                   text: 'Use Anyway',
                   onPress: () => {
-                    setCapturedPhoto(displayPhotoUri);
+                    setCapturedPhoto(fullPhotoUri);
                     setCameraVisible(false);
                   },
                 },
@@ -206,7 +195,7 @@ export default function EnrolmentScreen() {
             return;
           }
 
-          setCapturedPhoto(displayPhotoUri);
+          setCapturedPhoto(fullPhotoUri);
           setCameraVisible(false);
           return;
         }
@@ -215,7 +204,7 @@ export default function EnrolmentScreen() {
           await new Promise((r) => setTimeout(r, 300));
           if (cameraRef.current) {
             const retryPhoto = await cameraRef.current.takePictureAsync({
-              quality: 0.7,
+              quality: 0.8,
               shutterSound: false,
             });
             if (retryPhoto && retryPhoto.uri) {
@@ -224,18 +213,10 @@ export default function EnrolmentScreen() {
                 ThemedAlert.alert('No Face Detected', 'Please position your face clearly in the camera frame.', [{ text: 'OK' }], 'warning');
                 return;
               }
-              const { croppedUri } = await cropAndAlignFace(retryPhoto.uri, faces[0].boundingBox, faces[0].landmarks);
-              const finalPhotoUri = croppedUri || retryPhoto.uri;
-              const { squareUri: retrySquareUri } = await cropToCenteredSquarePhoto(
-                retryPhoto.uri,
-                undefined,
-                undefined,
-                faces[0].boundingBox
-              );
-              const retryDisplayUri = retrySquareUri || finalPhotoUri;
-              const retryQuality = await validateEnrollmentPhotoQuality(finalPhotoUri);
+              const retryPhotoUri = retryPhoto.uri;
+              const retryQuality = await validateEnrollmentPhotoQuality(retryPhotoUri);
               setPhotoQuality(retryQuality);
-              setCapturedPhoto(retryDisplayUri);
+              setCapturedPhoto(retryPhotoUri);
               setCameraVisible(false);
               return;
             }
@@ -250,14 +231,26 @@ export default function EnrolmentScreen() {
   const handleOpenAddModal = (dept?: string) => {
     setEditingId(null);
     const targetDept = typeof dept === 'string' ? dept : selectedDept === 'All' ? (contextDepts[0] || 'Engineering') : selectedDept;
+    
+    // Automatically derive Company Prefix (e.g. BRZ for Branzept) and 5-digit number
+    const prefix = deriveCompanyPrefix(orgAccount.companyName || deriveCompanyName(orgAccount.orgEmail, orgAccount.orgId));
+    let nextNum = 7093 + enrolledEmployees.length;
+    let newId = `${prefix}-${nextNum.toString().padStart(5, '0')}`;
+    // Guarantee uniqueness among existing employees
+    while (enrolledEmployees.some((e) => e.employeeId.toLowerCase() === newId.toLowerCase())) {
+      nextNum++;
+      newId = `${prefix}-${nextNum.toString().padStart(5, '0')}`;
+    }
+
     setFormData({
-      employeeId: `BR-0${(26 + enrolledEmployees.length + 1).toString().padStart(2, '0')}`,
+      employeeId: newId,
       name: '',
       department: targetDept,
       phone: '',
       joiningDate: new Date(),
     });
     setCapturedPhoto(null);
+    setPhotoQuality(null);
     setModalVisible(true);
     if (isDockOpen) toggleDock();
   };
@@ -815,107 +808,134 @@ export default function EnrolmentScreen() {
           </View>
         )}
 
-        {/* Expandable Filter Drawer */}
-        {isFilterExpanded && (
-          <View style={styles.expandableFilterCard}>
-            <View style={styles.filterCardHeader}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <MaterialCommunityIcons name="tune-variant" size={13} color={THEME_COLOR} style={{ marginRight: 4 }} />
-                <Text style={styles.filterCardHeading}>FILTERS & SORTING</Text>
-              </View>
-              {hasActiveFilters && (
-                <TouchableOpacity onPress={handleResetFilters} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Text style={styles.filterResetLink}>Reset Filters</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {/* Department Section */}
-            <Text style={styles.filterGroupTitle}>DEPARTMENT</Text>
-            <View style={styles.pillsWrapRow}>
-              {DEPT_FILTER_LIST.map((dept) => {
-                const isSelected = selectedDept === dept;
-                const count = dept === 'All' ? enrolledEmployees.length : enrolledEmployees.filter((e) => e.department === dept).length;
-                return (
+        {/* Controlled Modal Filter Overlay — Zero Layout Jump */}
+        <Modal
+          visible={isFilterExpanded}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setIsFilterExpanded(false)}
+        >
+          <TouchableOpacity
+            style={styles.filterModalOverlay}
+            activeOpacity={1}
+            onPress={() => setIsFilterExpanded(false)}
+          >
+            <TouchableOpacity
+              activeOpacity={1}
+              style={styles.filterModalCard}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={styles.filterCardHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <MaterialCommunityIcons name="tune-variant" size={15} color={THEME_COLOR} style={{ marginRight: 6 }} />
+                  <Text style={styles.filterCardHeading}>FILTERS & SORTING</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  {hasActiveFilters && (
+                    <TouchableOpacity onPress={handleResetFilters} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <Text style={styles.filterResetLink}>Reset Filters</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity
-                    key={dept}
-                    style={[styles.compactPill, isSelected ? styles.compactPillActive : styles.compactPillInactive]}
-                    onPress={() => setSelectedDept(dept as Department)}
+                    onPress={() => setIsFilterExpanded(false)}
+                    style={styles.filterDoneBtn}
+                    activeOpacity={0.8}
+                  >
+                    <FontAwesome name="check" size={11} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <Text style={styles.filterDoneBtnText}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
+                {/* Department Section */}
+                <Text style={styles.filterGroupTitle}>DEPARTMENT</Text>
+                <View style={styles.pillsWrapRow}>
+                  {DEPT_FILTER_LIST.map((dept) => {
+                    const isSelected = selectedDept === dept;
+                    const count = dept === 'All' ? enrolledEmployees.length : enrolledEmployees.filter((e) => e.department === dept).length;
+                    return (
+                      <TouchableOpacity
+                        key={dept}
+                        style={[styles.compactPill, isSelected ? styles.compactPillActive : styles.compactPillInactive]}
+                        onPress={() => setSelectedDept(dept as Department)}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={[styles.compactPillText, isSelected ? styles.compactPillTextActive : styles.compactPillTextInactive]}>
+                          {dept}
+                        </Text>
+                        <View style={[styles.compactCountBadge, isSelected ? styles.compactCountActive : styles.compactCountInactive]}>
+                          <Text style={[styles.compactCountText, isSelected ? styles.compactCountTextActive : styles.compactCountTextInactive]}>
+                            {count}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Face Mapping Status Section */}
+                <Text style={[styles.filterGroupTitle, { marginTop: 12 }]}>FACE MAPPING</Text>
+                <View style={styles.pillsWrapRow}>
+                  <TouchableOpacity
+                    style={[styles.compactPill, faceStatusFilter === 'All' && styles.compactPillActive]}
+                    onPress={() => setFaceStatusFilter('All')}
                     activeOpacity={0.75}
                   >
-                    <Text style={[styles.compactPillText, isSelected ? styles.compactPillTextActive : styles.compactPillTextInactive]}>
-                      {dept}
+                    <Text style={[styles.compactPillText, faceStatusFilter === 'All' && styles.compactPillTextActive]}>
+                      All ({enrolledEmployees.length})
                     </Text>
-                    <View style={[styles.compactCountBadge, isSelected ? styles.compactCountActive : styles.compactCountInactive]}>
-                      <Text style={[styles.compactCountText, isSelected ? styles.compactCountTextActive : styles.compactCountTextInactive]}>
-                        {count}
-                      </Text>
-                    </View>
                   </TouchableOpacity>
-                );
-              })}
-            </View>
 
-            {/* Face Mapping Status Section */}
-            <Text style={[styles.filterGroupTitle, { marginTop: 10 }]}>FACE MAPPING</Text>
-            <View style={styles.pillsWrapRow}>
-              <TouchableOpacity
-                style={[styles.compactPill, faceStatusFilter === 'All' && styles.compactPillActive]}
-                onPress={() => setFaceStatusFilter('All')}
-                activeOpacity={0.75}
-              >
-                <Text style={[styles.compactPillText, faceStatusFilter === 'All' && styles.compactPillTextActive]}>
-                  All ({enrolledEmployees.length})
-                </Text>
-              </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.compactPill, faceStatusFilter === 'Mapped' && styles.compactPillActive]}
+                    onPress={() => setFaceStatusFilter('Mapped')}
+                    activeOpacity={0.75}
+                  >
+                    <FontAwesome name="check-circle" size={10} color={faceStatusFilter === 'Mapped' ? '#FFFFFF' : '#10B981'} style={{ marginRight: 4 }} />
+                    <Text style={[styles.compactPillText, faceStatusFilter === 'Mapped' && styles.compactPillTextActive]}>
+                      Mapped ({enrolledEmployees.filter((e) => Boolean(e.photoUri)).length})
+                    </Text>
+                  </TouchableOpacity>
 
-              <TouchableOpacity
-                style={[styles.compactPill, faceStatusFilter === 'Mapped' && styles.compactPillActive]}
-                onPress={() => setFaceStatusFilter('Mapped')}
-                activeOpacity={0.75}
-              >
-                <FontAwesome name="check-circle" size={10} color={faceStatusFilter === 'Mapped' ? '#FFFFFF' : '#10B981'} style={{ marginRight: 4 }} />
-                <Text style={[styles.compactPillText, faceStatusFilter === 'Mapped' && styles.compactPillTextActive]}>
-                  Mapped ({enrolledEmployees.filter((e) => Boolean(e.photoUri)).length})
-                </Text>
-              </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.compactPill, faceStatusFilter === 'Pending' && styles.compactPillActive]}
+                    onPress={() => setFaceStatusFilter('Pending')}
+                    activeOpacity={0.75}
+                  >
+                    <FontAwesome name="exclamation-circle" size={10} color={faceStatusFilter === 'Pending' ? '#FFFFFF' : '#F59E0B'} style={{ marginRight: 4 }} />
+                    <Text style={[styles.compactPillText, faceStatusFilter === 'Pending' && styles.compactPillTextActive]}>
+                      Pending ({enrolledEmployees.filter((e) => !e.photoUri).length})
+                    </Text>
+                  </TouchableOpacity>
+                </View>
 
-              <TouchableOpacity
-                style={[styles.compactPill, faceStatusFilter === 'Pending' && styles.compactPillActive]}
-                onPress={() => setFaceStatusFilter('Pending')}
-                activeOpacity={0.75}
-              >
-                <FontAwesome name="exclamation-circle" size={10} color={faceStatusFilter === 'Pending' ? '#FFFFFF' : '#F59E0B'} style={{ marginRight: 4 }} />
-                <Text style={[styles.compactPillText, faceStatusFilter === 'Pending' && styles.compactPillTextActive]}>
-                  Pending ({enrolledEmployees.filter((e) => !e.photoUri).length})
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Sort Order Section */}
-            <Text style={[styles.filterGroupTitle, { marginTop: 10 }]}>SORT ORDER</Text>
-            <View style={styles.pillsWrapRow}>
-              {(
-                [
-                  { id: 'name', label: 'Name (A-Z)' },
-                  { id: 'id', label: 'ID' },
-                  { id: 'recent', label: 'Recent' },
-                ] as const
-              ).map((s) => (
-                <TouchableOpacity
-                  key={s.id}
-                  style={[styles.compactPill, sortBy === s.id && styles.compactPillActive]}
-                  onPress={() => setSortBy(s.id)}
-                  activeOpacity={0.75}
-                >
-                  <Text style={[styles.compactPillText, sortBy === s.id && styles.compactPillTextActive]}>
-                    {s.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        )}
+                {/* Sort Order Section */}
+                <Text style={[styles.filterGroupTitle, { marginTop: 12 }]}>SORT ORDER</Text>
+                <View style={styles.pillsWrapRow}>
+                  {(
+                    [
+                      { id: 'name', label: 'Name (A-Z)' },
+                      { id: 'id', label: 'ID' },
+                      { id: 'recent', label: 'Recent' },
+                    ] as const
+                  ).map((s) => (
+                    <TouchableOpacity
+                      key={s.id}
+                      style={[styles.compactPill, sortBy === s.id && styles.compactPillActive]}
+                      onPress={() => setSortBy(s.id)}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={[styles.compactPillText, sortBy === s.id && styles.compactPillTextActive]}>
+                        {s.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </ScrollView>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
       </View>
 
       {/* List / Folder View */}
@@ -1269,7 +1289,7 @@ export default function EnrolmentScreen() {
                       onPress={() => {
                         setPreviewEmployee({
                           name: formData.name || 'New Employee',
-                          employeeId: formData.employeeId || 'BR-TMP',
+                          employeeId: formData.employeeId || 'BRZ-07093',
                           department: formData.department,
                           photoUri: capturedPhoto,
                           phone: formData.phone,
@@ -1283,10 +1303,6 @@ export default function EnrolmentScreen() {
                         style={styles.formFaceThumb}
                         resizeMode="cover"
                       />
-                      <View style={styles.formFaceOverlay}>
-                        <MaterialCommunityIcons name="magnify-plus-outline" size={13} color="#FFFFFF" />
-                        <Text style={styles.formFaceOverlayText}>Preview</Text>
-                      </View>
                     </TouchableOpacity>
 
                     <View style={styles.formFaceInfoCol}>
@@ -2947,5 +2963,40 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 1,
     marginTop: 8,
+  },
+  filterModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(10, 25, 47, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 24,
+  },
+  filterModalCard: {
+    width: '100%',
+    maxWidth: 460,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  filterDoneBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: THEME_COLOR,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  filterDoneBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '700',
   },
 });

@@ -7,7 +7,6 @@ export {
   PunchRecord,
   EmployeeAttendance,
   ShiftEntry,
-  LeaveRecord,
   DEFAULT_AI_SETTINGS,
   DEFAULT_DEPARTMENTS,
   DEFAULT_SHIFTS,
@@ -20,7 +19,6 @@ import {
   PunchRecord,
   EmployeeAttendance,
   ShiftEntry,
-  LeaveRecord,
   DEFAULT_AI_SETTINGS,
   DEFAULT_DEPARTMENTS,
   DEFAULT_SHIFTS,
@@ -39,14 +37,8 @@ import {
   saveCustomFieldsDb,
   getAiSettingsDb,
   saveAiSettingsDb,
-  getLeavesDb,
-  saveLeaveDb,
-  deleteLeaveDb,
-  isEmployeeOnLeaveDb,
   getVoiceFeedbackDb,
   saveVoiceFeedbackDb,
-  getGroupScanModeDb,
-  saveGroupScanModeDb,
   getKeyValue,
   setKeyValue,
 } from '@/utils/database';
@@ -71,8 +63,9 @@ export interface AttendanceContextType {
     isNewPunch: boolean;
     type: 'IN' | 'OUT';
     summary: string;
-    status: 'PRESENT' | 'LATE' | 'HALF_DAY' | 'ON_LEAVE';
+    status: 'PRESENT' | 'LATE' | 'HALF_DAY';
     isLate?: boolean;
+    shiftName?: string;
   };
   removePunch: (employeeId: string, date: string, punchId: string) => Promise<void>;
   clearAllRecords: () => Promise<void>;
@@ -89,19 +82,6 @@ export interface AttendanceContextType {
   saveAiSettings: (settings: Partial<AiModelSettings>) => Promise<void>;
   voiceFeedback: boolean;
   saveVoiceFeedback: (enabled: boolean) => Promise<void>;
-  groupScanMode: boolean;
-  saveGroupScanMode: (enabled: boolean) => Promise<void>;
-  leaves: LeaveRecord[];
-  saveLeave: (leave: LeaveRecord) => Promise<void>;
-  deleteLeave: (id: string) => Promise<void>;
-  markEmployeeLeave: (
-    empId: string,
-    empName: string,
-    start: string,
-    end: string,
-    type: 'Casual' | 'Sick' | 'Earned' | 'Unpaid',
-    reason: string
-  ) => Promise<void>;
 }
 
 export const DEFAULT_ENROLLED: EnrolledEmployee[] = [
@@ -223,11 +203,25 @@ export function resolvePunchType(
   return lastPunchType === 'IN' ? 'OUT' : 'IN';
 }
 
+export function isTimeInShift(shift: ShiftEntry | null, date: Date = new Date()): boolean {
+  if (!shift) return false;
+  const nowMins = toMins(date.getHours(), date.getMinutes());
+  const startMins = toMins(shift.startHour, shift.startMin);
+  const endMins = toMins(shift.endHour, shift.endMin);
+
+  if (startMins < endMins) {
+    return nowMins >= startMins && nowMins < endMins;
+  } else {
+    // Midnight crossing (e.g. Night shift: 22:00 to 06:00)
+    return nowMins >= startMins || nowMins < endMins;
+  }
+}
+
 // ── Initial mock data ─────────────────────────────────────────────────────────
 
 const INITIAL_RECORDS: EmployeeAttendance[] = [
   {
-    id: 'att-1', employeeId: 'BR-001', name: 'Ravi Kiran', date: getTodayDateString(),
+    id: 'att-1', employeeId: 'BRZ-07091', name: 'Ravi Kiran', date: getTodayDateString(), shiftName: 'Morning',
     punches: [
       { id: 'p-1', type: 'IN',  time: '08:42:09 am', timestamp: Date.now() - 1000 * 60 * 180 },
       { id: 'p-2', type: 'OUT', time: '01:15:30 pm', timestamp: Date.now() - 1000 * 60 * 120 },
@@ -235,7 +229,7 @@ const INITIAL_RECORDS: EmployeeAttendance[] = [
     totalWorkingHours: '4 hrs 33 mins', status: 'PRESENT',
   },
   {
-    id: 'att-2', employeeId: 'BR-026', name: 'John Doe', date: getTodayDateString(),
+    id: 'att-2', employeeId: 'BRZ-07092', name: 'John Doe', date: getTodayDateString(), shiftName: 'Morning',
     punches: [{ id: 'p-4', type: 'IN', time: '09:05:10 am', timestamp: Date.now() - 1000 * 60 * 240 }],
     status: 'PRESENT',
   },
@@ -252,7 +246,7 @@ const AttendanceContext = createContext<AttendanceContextType>({
   addEnrolledEmployee: async () => false,
   updateEnrolledEmployee: async () => false,
   deleteEnrolledEmployee: async () => false,
-  recordPunch: () => ({ punch: { id: '', type: 'IN', time: '', timestamp: 0 }, isNewPunch: false, type: 'IN', summary: '', status: 'PRESENT' }),
+  recordPunch: () => ({ punch: { id: '', type: 'IN', time: '', timestamp: 0 }, isNewPunch: false, type: 'IN', summary: '', status: 'PRESENT', shiftName: 'Morning' }),
   removePunch: async () => {},
   clearAllRecords: async () => {},
   getRecordsForDate: () => [],
@@ -268,12 +262,6 @@ const AttendanceContext = createContext<AttendanceContextType>({
   saveAiSettings: async () => {},
   voiceFeedback: true,
   saveVoiceFeedback: async () => {},
-  groupScanMode: false,
-  saveGroupScanMode: async () => {},
-  leaves: [],
-  saveLeave: async () => {},
-  deleteLeave: async () => {},
-  markEmployeeLeave: async () => {},
 });
 
 // ── Provider ──────────────────────────────────────────────────────────────────
@@ -286,9 +274,7 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [departments, setDepartmentsState] = useState<string[]>(DEFAULT_DEPARTMENTS);
   const [customFields, setCustomFieldsState] = useState<CustomField[]>([]);
   const [aiSettings, setAiSettingsState] = useState<AiModelSettings>(DEFAULT_AI_SETTINGS);
-  const [leaves, setLeavesState] = useState<LeaveRecord[]>([]);
   const [voiceFeedback, setVoiceFeedbackState] = useState(true);
-  const [groupScanMode, setGroupScanModeState] = useState(false);
 
   // Load SQLite database on mount
   useEffect(() => {
@@ -304,9 +290,7 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setDepartmentsState(getDepartmentsDb());
       setCustomFieldsState(getCustomFieldsDb());
       setAiSettingsState(getAiSettingsDb());
-      setLeavesState(getLeavesDb());
       setVoiceFeedbackState(getVoiceFeedbackDb());
-      setGroupScanModeState(getGroupScanModeDb());
     } catch (e) {
       console.warn('[AttendanceContext] SQLite load error', e);
     }
@@ -326,44 +310,6 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const saveVoiceFeedback = async (enabled: boolean) => {
     setVoiceFeedbackState(enabled);
     saveVoiceFeedbackDb(enabled);
-  };
-
-  const saveGroupScanMode = async (enabled: boolean) => {
-    setGroupScanModeState(enabled);
-    saveGroupScanModeDb(enabled);
-  };
-
-  const saveLeave = async (leave: LeaveRecord) => {
-    saveLeaveDb(leave);
-    setLeavesState(getLeavesDb());
-  };
-
-  const deleteLeave = async (id: string) => {
-    deleteLeaveDb(id);
-    setLeavesState(getLeavesDb());
-  };
-
-  const markEmployeeLeave = async (
-    empId: string,
-    empName: string,
-    start: string,
-    end: string,
-    type: 'Casual' | 'Sick' | 'Earned' | 'Unpaid',
-    reason: string
-  ) => {
-    const leave: LeaveRecord = {
-      id: `leave-${Date.now()}`,
-      employeeId: empId,
-      employeeName: empName,
-      startDate: start,
-      endDate: end,
-      type,
-      reason,
-      status: 'APPROVED',
-      createdAt: Date.now(),
-    };
-    saveLeaveDb(leave);
-    setLeavesState(getLeavesDb());
   };
 
   const saveRecords = async (records: EmployeeAttendance[]) => {
@@ -417,12 +363,16 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   const getActiveShift = (): ShiftEntry | null => {
+    if (shifts.length === 0) return null;
+    const now = new Date();
+    // 1. Automatic Shift Assignment based on system time window
+    const inRange = shifts.find((s) => isTimeInShift(s, now));
+    if (inRange) return inRange;
+
+    // 2. Fallback to active or closest shift
     const explicit = shifts.find((s) => s.isActive);
     if (explicit) return explicit;
-    if (shifts.length === 0) return null;
 
-    // Auto-detect shift closest to current time
-    const now = new Date();
     const nowMins = toMins(now.getHours(), now.getMinutes());
     let bestShift = shifts[0];
     let minDiff = 9999;
@@ -451,8 +401,9 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     isNewPunch: boolean;
     type: 'IN' | 'OUT';
     summary: string;
-    status: 'PRESENT' | 'LATE' | 'HALF_DAY' | 'ON_LEAVE';
+    status: 'PRESENT' | 'LATE' | 'HALF_DAY';
     isLate?: boolean;
+    shiftName?: string;
   } => {
     const today = getTodayDateString();
     const now = new Date();
@@ -465,6 +416,7 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     let updatedRecords = [...attendanceRecords];
     const activeShift = getActiveShift();
+    const shiftName = activeShift?.name || 'Morning';
     const windowType = getShiftPunchWindow(activeShift, now);
 
     if (existingIndex >= 0) {
@@ -480,6 +432,7 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           summary: `Already clocked ${lastPunch.type === 'IN' ? 'IN' : 'OUT'} (${lastPunch.time})`,
           status: existing.status,
           isLate: existing.status === 'LATE',
+          shiftName: existing.shiftName || shiftName,
         };
       }
 
@@ -495,6 +448,7 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             summary: `Shift completed (${lastPunch.type} at ${lastPunch.time})`,
             status: existing.status,
             isLate: existing.status === 'LATE',
+            shiftName: existing.shiftName || shiftName,
           };
         } else {
           punchType = forcedType ?? (lastPunch.type === 'IN' ? 'OUT' : 'IN');
@@ -509,7 +463,7 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const workingHours = computeWorkingHours(updatedPunches);
 
       // Determine attendance status
-      let recordStatus: 'PRESENT' | 'LATE' | 'HALF_DAY' | 'ON_LEAVE' = existing.status;
+      let recordStatus: 'PRESENT' | 'LATE' | 'HALF_DAY' = existing.status;
 
       // If this is the first IN punch for today, check if late
       if (punchType === 'IN' && !existing.punches.some((p) => p.type === 'IN')) {
@@ -539,6 +493,7 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         punches: updatedPunches,
         totalWorkingHours: workingHours,
         status: recordStatus,
+        shiftName: existing.shiftName || shiftName,
       };
       saveRecords(updatedRecords);
 
@@ -557,6 +512,7 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         summary,
         status: recordStatus,
         isLate,
+        shiftName: existing.shiftName || shiftName,
       };
     } else {
       // First punch of the day: governed strictly by shift timing!
@@ -575,6 +531,7 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         punches: [newPunch],
         totalWorkingHours: undefined,
         status: recordStatus,
+        shiftName,
       };
 
       updatedRecords = [newRecord, ...updatedRecords];
@@ -594,6 +551,7 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         summary,
         status: recordStatus,
         isLate,
+        shiftName,
       };
     }
   };
@@ -638,12 +596,6 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         saveAiSettings,
         voiceFeedback,
         saveVoiceFeedback,
-        groupScanMode,
-        saveGroupScanMode,
-        leaves,
-        saveLeave,
-        deleteLeave,
-        markEmployeeLeave,
       }}
     >
       {children}

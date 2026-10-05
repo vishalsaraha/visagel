@@ -1,5 +1,5 @@
-import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as SQLite from 'expo-sqlite';
 
 export interface CustomField {
   id: string;
@@ -68,7 +68,8 @@ export interface EmployeeAttendance {
   date: string;
   punches: PunchRecord[];
   totalWorkingHours?: string;
-  status: 'PRESENT' | 'LATE' | 'HALF_DAY' | 'ON_LEAVE';
+  status: 'PRESENT' | 'LATE' | 'HALF_DAY';
+  shiftName?: string;
 }
 
 export interface ShiftEntry {
@@ -107,8 +108,9 @@ export const DEFAULT_DEPARTMENTS: string[] = [
 ];
 
 export const DEFAULT_SHIFTS: ShiftEntry[] = [
-  { id: '1', name: 'Day Shift', startHour: 9, startMin: 0, endHour: 18, endMin: 0, lateCutoffHour: 9, lateCutoffMin: 30, isActive: true },
-  { id: '2', name: 'Night Shift', startHour: 21, startMin: 0, endHour: 6, endMin: 0, lateCutoffHour: 21, lateCutoffMin: 30, isActive: false },
+  { id: '1', name: 'Morning', startHour: 6, startMin: 0, endHour: 14, endMin: 0, lateCutoffHour: 6, lateCutoffMin: 30, isActive: true },
+  { id: '2', name: 'Afternoon', startHour: 14, startMin: 0, endHour: 22, endMin: 0, lateCutoffHour: 14, lateCutoffMin: 30, isActive: true },
+  { id: '3', name: 'Night', startHour: 22, startMin: 0, endHour: 6, endMin: 0, lateCutoffHour: 22, lateCutoffMin: 30, isActive: true },
 ];
 
 const DB_NAME = 'visagel.db';
@@ -246,7 +248,7 @@ function migrateLegacyData(db: SQLite.SQLiteDatabase) {
                 saveEmployeeDb(emp);
               }
             }
-          } catch (_) {}
+          } catch (_) { }
         });
       }
     });
@@ -261,7 +263,7 @@ function migrateLegacyData(db: SQLite.SQLiteDatabase) {
             if (Array.isArray(list) && list.length > 0) {
               saveShiftsDb(list);
             }
-          } catch (_) {}
+          } catch (_) { }
         });
       }
     });
@@ -276,7 +278,7 @@ function migrateLegacyData(db: SQLite.SQLiteDatabase) {
             if (obj && typeof obj === 'object') {
               saveAiSettingsDb(obj);
             }
-          } catch (_) {}
+          } catch (_) { }
         });
       }
     });
@@ -306,7 +308,7 @@ export function setKeyValue(key: string, value: string): void {
   if (!db) return;
   try {
     db.runSync('INSERT OR REPLACE INTO key_values (key, value) VALUES (?, ?)', [key, value]);
-  } catch {}
+  } catch { }
 }
 
 // ── Enrolled Employees ────────────────────────────────────────────────────────
@@ -349,7 +351,7 @@ export function saveEmployeeDb(emp: EnrolledEmployee): void {
         emp.customData ? JSON.stringify(emp.customData) : null,
       ]
     );
-  } catch {}
+  } catch { }
 }
 
 export function deleteEmployeeDb(id: string): void {
@@ -357,7 +359,7 @@ export function deleteEmployeeDb(id: string): void {
   if (!db) return;
   try {
     db.runSync('DELETE FROM employees WHERE id = ?', [id]);
-  } catch {}
+  } catch { }
 }
 
 // ── Attendance & Punches ──────────────────────────────────────────────────────
@@ -424,7 +426,7 @@ export function saveAttendanceRecordDb(rec: EmployeeAttendance): void {
         [p.id, rec.id, rec.employeeId, rec.date, p.type, p.time, p.timestamp]
       );
     }
-  } catch {}
+  } catch { }
 }
 
 export function removePunchDb(employeeId: string, date: string, punchId: string): void {
@@ -440,7 +442,7 @@ export function removePunchDb(employeeId: string, date: string, punchId: string)
         db.runSync('DELETE FROM attendance_records WHERE id = ?', [attRow.id]);
       }
     }
-  } catch {}
+  } catch { }
 }
 
 export function clearAllAttendanceDb(): void {
@@ -449,7 +451,7 @@ export function clearAllAttendanceDb(): void {
   try {
     db.runSync('DELETE FROM punches');
     db.runSync('DELETE FROM attendance_records');
-  } catch {}
+  } catch { }
 }
 
 // ── Shifts ────────────────────────────────────────────────────────────────────
@@ -501,7 +503,7 @@ export function saveShiftsDb(shifts: ShiftEntry[]): void {
         ]
       );
     }
-  } catch {}
+  } catch { }
 }
 
 // ── Departments ──────────────────────────────────────────────────────────────
@@ -529,7 +531,7 @@ export function saveDepartmentsDb(depts: string[]): void {
     for (const name of depts) {
       db.runSync('INSERT OR IGNORE INTO departments (name) VALUES (?)', [name]);
     }
-  } catch {}
+  } catch { }
 }
 
 // ── Custom Fields ─────────────────────────────────────────────────────────────
@@ -563,7 +565,7 @@ export function saveCustomFieldsDb(fields: CustomField[]): void {
         [f.id, f.label, f.key, f.inputType, f.isRequired ? 1 : 0]
       );
     }
-  } catch {}
+  } catch { }
 }
 
 // ── Admin Accounts & Password ──────────────────────────────────────────────────
@@ -636,7 +638,7 @@ export function saveAiSettingsDb(settings: Partial<AiModelSettings>): void {
   if (val) {
     try {
       current = { ...DEFAULT_AI_SETTINGS, ...JSON.parse(val) };
-    } catch {}
+    } catch { }
   }
   const updated = { ...current, ...settings };
   setKeyValue('ai_settings', JSON.stringify(updated));
@@ -672,6 +674,19 @@ export function deriveCompanyName(email?: string, orgId?: string): string {
   const namePart = domain.split('.')[0] || '';
   if (!namePart) return orgId || 'Organisation';
   return namePart.charAt(0).toUpperCase() + namePart.slice(1);
+}
+
+export function deriveCompanyPrefix(companyName?: string): string {
+  if (!companyName || !companyName.trim()) return 'BRZ';
+  const clean = companyName.trim();
+  if (clean.toLowerCase().includes('branzept')) return 'BRZ';
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (words.length >= 3) {
+    return (words[0][0] + words[1][0] + words[2][0]).toUpperCase();
+  }
+  const main = words[0].replace(/[^a-zA-Z]/g, '').toUpperCase();
+  if (main.length >= 3) return main.slice(0, 3);
+  return (main + 'XXX').slice(0, 3);
 }
 
 export function getOrgPlatformAccountDb(): OrgPlatformAccount {
